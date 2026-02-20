@@ -1,0 +1,12 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "atomspace"
+version = "0.0.1"
+description = "AtomSpace reasoning graph"
+
+[tool.setuptools]
+packages = ["atomspace"]
+
