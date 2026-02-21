@@ -35,6 +35,19 @@ DEFAULT_PREDICATE_SPECS: Dict[str, Dict[str, Any]] = {
         arity=1, roles=("proposition")
     ),  # This is the "always and definitely true fact
     "Not": dict(arity=1, roles=("proposition",)),
+    # --- Personal/world seed predicates (Excel CSV-friendly) ---
+    "WorksAt": dict(arity=2, roles=("person", "organization")),
+    "LivesIn": dict(arity=2, roles=("person", "place")),
+    "Builds": dict(arity=2, roles=("builder", "project")),
+    "IsWorkingOn": dict(arity=2, roles=("person", "project")),
+    "Loves": dict(arity=2, roles=("lover", "beloved")),
+    "Encourages": dict(arity=2, roles=("person", "person")),
+    "Teaches": dict(arity=3, roles=("teacher", "student", "topic")),
+    "Enjoys": dict(arity=2, roles=("person", "thing")),
+    "Prefers": dict(arity=2, roles=("person", "thing")),
+    "Dislikes": dict(arity=2, roles=("person", "thing")),
+    "Plays": dict(arity=2, roles=("person", "game_or_activity")),
+    "Likes": dict(arity=2, roles=("person", "thing")),
 }
 
 
