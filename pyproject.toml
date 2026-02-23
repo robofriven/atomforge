@@ -3,10 +3,10 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "atomspace"
+name = "atomforge"
 version = "0.0.1"
-description = "AtomSpace reasoning graph"
+description = "Atomspace reasoning graph"
 
 [tool.setuptools]
-packages = ["atomspace"]
+packages = ["atomforge"]
 
