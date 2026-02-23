@@ -1,53 +1,9 @@
-# Byte-compiled / optimized / DLL files
 __pycache__/
-*.py[cod]
-*$py.class
-
-# C extensions
-*.so
-
-# Virtual environments
+*.pyc
 .venv/
-venv/
-env/
-ENV/
-
-# Distribution / packaging
+*.egg-info/
 build/
 dist/
-*.egg-info/
-.eggs/
-pip-wheel-metadata/
-
-# Installer logs
-pip-log.txt
-pip-delete-this-directory.txt
-
-# Unit test / coverage reports
-.pytest_cache/
-.coverage
-.coverage.*
-htmlcov/
-
-# MyPy
-.mypy_cache/
-
-# Pyre
-.pyre/
-
-# Pytype
-.pytype/
-
-# VS Code
-.vscode/
-
-# JetBrains
-.idea/
-
-# Mac
-.DS_Store
-
-# Environment variables
 .env
-.env.*
-
+.envrc
+logs/
