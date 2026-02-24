@@ -86,20 +86,78 @@ class RetrieveAPI:
                 out.append((lid, lk.args))
         return out
 
-    def link_by_label(
-        self, predicate: NameOrId, *labels: str
-    ) -> List[Tuple[AtomId, Tuple[AtomId, ...]]]:
-        pid = self.A._resolve_predicate(predicate)
-        pools = [self.A._resolve_many_by_label(lbl) for lbl in labels]
-        if any(len(p) == 0 for p in pools):
-            return []
+    # api.py (inside class RetrieveAPI)
 
-        out: List[Tuple[AtomId, Tuple[AtomId, ...]]] = []
-        for lid in self.A._by_pred.get(pid, set()):
-            lk = self.A._atoms[lid]
-            assert isinstance(lk, Link)
-            if len(lk.args) != len(pools):
+
+def link_by_label(
+    self, predicate: NameOrId, *labels: str
+) -> List[Tuple[AtomId, Tuple[AtomId, ...]]]:
+    """
+    Supports '*' as a wildcard label for any arg position.
+
+    Examples:
+      link_by_label("At", "Greg", "*")     -> where is Greg?
+      link_by_label("At", "*", "Tavern")   -> who's at the Tavern?
+      link_by_label("Believes", "Joe", "*")-> what does Joe believe?
+    """
+    pid = self.A._resolve_predicate(predicate)
+
+    # Build pools, but allow wildcards.
+    pools: List[Optional[set[int]]] = []
+    for lbl in labels:
+        if lbl == "*" or (isinstance(lbl, str) and lbl.strip() == "*"):
+            pools.append(None)  # unconstrained slot
+        else:
+            pool = set(self.A._resolve_many_by_label(lbl))
+            if not pool:
+                return []
+            pools.append(pool)
+
+    # Seed candidates:
+    # If any slot is constrained, use in_links from that pool to reduce scanning.
+    # Otherwise fall back to scanning all links for the predicate.
+    candidate_lids: Optional[set[int]] = None
+    for pool in pools:
+        if pool is None:
+            continue
+        # Union in_links over all ids in this pool
+        seeded: set[int] = set()
+        for atom_id in pool:
+            seeded |= self.A.in_links(atom_id, predicate=pid)
+        candidate_lids = seeded
+        break
+
+    if candidate_lids is None:
+        candidate_lids = set(self.A._by_pred.get(pid, set()))
+
+    out: List[Tuple[AtomId, Tuple[AtomId, ...]]] = []
+    for lid in candidate_lids:
+        lk = self.A._atoms[lid]
+        assert isinstance(lk, Link)
+        if lk.predicate != pid:
+            continue
+        if len(lk.args) != len(pools):
+            continue
+
+        ok = True
+        for got, pool in zip(lk.args, pools):
+            if pool is None:  # wildcard slot
                 continue
+            if got not in pool:
+                ok = False
+                break
+
+        if ok:
+            out.append((lid, lk.args))
+
+    return out
+
+    out: List[Tuple[AtomId, Tuple[AtomId, ...]]] = []
+    for lid in self.A._by_pred.get(pid, set()):
+        lk = self.A._atoms[lid]
+        assert isinstance(lk, Link)
+        if len(lk.args) != len(pools):
+            continue
             ok = True
             for got, pool in zip(lk.args, pools):
                 if got not in pool:
