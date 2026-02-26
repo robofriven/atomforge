@@ -1,9 +1,24 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
-from typing import List
+from typing import Dict, List, Tuple
 
 from .atoms import AtomId, Node, Link, KindAtom, PredicateAtom
+
+# Compile once
+_TEMPLATE_TOKEN = re.compile(r"\{(?:(a|paren|join):)?([A-Za-z_][A-Za-z0-9_]*)\}")
+
+
+def _is_ident(s: str) -> bool:
+    return bool(re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", s))
+
+
+def _norm_role(role: str, idx: int) -> str:
+    # Always provide arg0/arg1... keys. Roles like "Any" are not helpful as keys.
+    if not role or role == "Any" or not _is_ident(role):
+        return f"arg{idx}"
+    return role
 
 
 @dataclass(frozen=True)
@@ -120,64 +135,77 @@ class Renderer:
         return ", ".join(items[:-1]) + f", and {items[-1]}"
 
     def _render_link_pretty(self, link: Link, *, depth: int) -> str:
+        """
+        Template-driven pretty rendering.
+
+        Uses pred_atom.template if present.
+        Template tokens support:
+          {role}             -> substituted value
+          {a:role}           -> adds a/an article
+          {paren:role}       -> wraps in (...) if that arg is a Link
+          {join:role}        -> joins all args mapped to that role (useful for variadic)
+        Always provides arg0, arg1, ... keys.
+        """
         if depth <= 0:
             return "…"
 
         pred_atom = self.space._atoms.get(link.predicate)
-        pred_name = getattr(pred_atom, "label", None)
+        template = getattr(pred_atom, "template", None) if pred_atom else None
 
-        args = link.args
+        # No template? Fall back to structural renderer.
+        if not template or not isinstance(template, str) or not template.strip():
+            return self.render(link.id)
 
         def r(aid: AtomId) -> str:
             return self.render_pretty(aid, depth=depth - 1)
 
-        def r_paren_if_link(aid: AtomId) -> str:
-            inner_atom = self.space._atoms.get(aid)
+        def is_link(aid: AtomId) -> bool:
+            return isinstance(self.space._atoms.get(aid), Link)
+
+        mapping: Dict[str, str] = {}
+        role_to_vals: Dict[str, List[Tuple[AtomId, str]]] = {}
+
+        roles = getattr(pred_atom, "roles", None) if pred_atom else None
+
+        for i, aid in enumerate(link.args):
             txt = r(aid)
-            if isinstance(inner_atom, Link):
-                return f"({txt})"
+            mapping[f"arg{i}"] = txt
+
+            role_name = roles[i] if roles and i < len(roles) else ""
+            key = _norm_role(role_name, i)
+
+            # Add role-key mapping if it isn't already set.
+            mapping.setdefault(key, txt)
+            role_to_vals.setdefault(key, []).append((aid, txt))
+
+        def repl(m: re.Match) -> str:
+            directive = m.group(1)  # a / paren / join / None
+            key = m.group(2)
+
+            if directive == "join":
+                items = [txt for (_aid, txt) in role_to_vals.get(key, [])]
+                return self._join_english(items)
+
+            txt = mapping.get(key, "")
+
+            if directive == "a":
+                art = self._article_for(txt)
+                return f"{art} {txt}".strip()
+
+            if directive == "paren":
+                vals = role_to_vals.get(key, [])
+                if vals and is_link(vals[0][0]):
+                    return f"({vals[0][1]})"
+                return txt
+
             return txt
 
-        if pred_name == "IsA" and len(args) == 2:
-            subj = r(args[0])
-            cls = r(args[1])
-            art = self._article_for(cls)
-            return f"{subj} is {art} {cls}"
-
-        if pred_name == "HasA" and len(args) == 2:
-            owner = r(args[0])
-            thing = r(args[1])
-            art = self._article_for(thing)
-            return f"{owner} has {art} {thing}"
-
-        if pred_name == "Wants" and len(args) == 2:
-            agent = r(args[0])
-            target = r(args[1])
-            return f"{agent} wants {target}"
-
-        if pred_name == "Believes" and len(args) == 2:
-            agent = r(args[0])
-            prop = r_paren_if_link(args[1])
-            return f"{agent} believes that {prop}"
-
-        if pred_name == "Not" and len(args) == 1:
-            return f"not {r_paren_if_link(args[0])}"
-
-        if pred_name == "Because" and len(args) >= 2:
-            conclusion = r(args[0])
-            evidence = [r(a) for a in args[1:]]
-            return f"{conclusion} because {self._join_english(evidence)}"
-
-        if pred_name == "HappensAt" and len(args) == 2:
-            prop = r_paren_if_link(args[0])
-            t = r(args[1])
-            return f"{prop} happens at {t}"
-
-        # fallback
-        return self.render(link.id)
+        out = _TEMPLATE_TOKEN.sub(repl, template.strip())
+        return out
 
     @staticmethod
     def _maybe_id(text: str, atom_id: AtomId, opts: RenderOptions) -> str:
         if opts.show_ids:
             return f"{text}#{atom_id}"
         return text
+

@@ -15,14 +15,24 @@ DEFAULT_PREDICATE_SPECS: Dict[str, Dict[str, Any]] = {
         anti_reflexive=True,
         acyclic=True,
     ),
-    "HasA": dict(arity=2, roles=("owner", "thing")),
-    "Wants": dict(arity=2, roles=("agent", "target")),
-    "Because": dict(arity=-1, roles=("conclusion", "evidence")),
-    "Believes": dict(arity=2, roles=("agent", "proposition")),
+    "HasA": dict(arity=2, roles=("owner", "thing"), template="{owner} has {thing}"),
+    "Wants": dict(
+        arity=2, roles=("agent", "target"), template="{agent} wants {target}"
+    ),
+    "Because": dict(
+        arity=-1,
+        roles=("conclusion", "evidence"),
+        template="{conclusion} because {evidence}",
+    ),
+    "Believes": dict(
+        arity=2,
+        roles=("agent", "proposition"),
+        template="{agent} believes {proposition}",
+    ),
     "HappensAt": dict(arity=2, roles=("proposition", "time")),
     # Story framing v0 (uncomment when you're ready)
-    "Does": dict(arity=2, roles=("Any", "Any")),
-    "At": dict(arity=2, roles=("thing", "place")),
+    "Does": dict(arity=2, roles=("Agent", "Action"), template="{Agent} does {action}"),
+    "At": dict(arity=2, roles=("thing", "place"), template="{thing} is at {place}"),
     "Claims": dict(arity=2, roles=("speaker", "proposition")),
     "Called": dict(arity=2, roles=("thing", "name")),
     "Causes": dict(arity=2, roles=("cause", "effect")),

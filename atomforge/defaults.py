@@ -82,25 +82,3 @@ def _init_default_kinds(space: AtomSpace) -> Dict[str, AtomId]:
         "TimeInstant": space.kind("TimeInstant"),
         "Proposition": space.kind("Proposition"),
     }
-
-
-def _init_default_predicates(space: AtomSpace) -> Dict[str, AtomId]:
-    P: Dict[str, AtomId] = {}
-    P["IsA"] = space.predicate(
-        "IsA",
-        arity=2,
-        roles=("instance", "class"),
-        anti_reflexive=True,
-        acyclic=True,
-    )
-    P["HasA"] = space.predicate("HasA", arity=2, roles=("owner", "thing"))
-    P["Wants"] = space.predicate("Wants", arity=2, roles=("agent", "target"))
-    P["Not"] = space.predicate("Not", arity=1, roles=("proposition",))
-    P["Because"] = space.predicate(
-        "Because", arity=-1, roles=("conclusion", "evidence")
-    )
-    P["Believes"] = space.predicate("Believes", arity=2, roles=("agent", "proposition"))
-    P["HappensAt"] = space.predicate(
-        "HappensAt", arity=2, roles=("proposition", "time")
-    )
-    return P

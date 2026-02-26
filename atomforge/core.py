@@ -105,6 +105,7 @@ class AtomSpace:
         anti_reflexive: bool = False,
         acyclic: bool = False,
         intern: bool = True,
+        template: str | None = None,
     ) -> AtomId:
         if intern:
             existing = self._pred_intern.get(name)
@@ -119,6 +120,7 @@ class AtomSpace:
                 created_at_utc=_utc_now_iso(),
                 arity=arity,
                 roles=roles,
+                template=template,
                 anti_reflexive=anti_reflexive,
                 acyclic=acyclic,
             )

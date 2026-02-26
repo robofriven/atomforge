@@ -56,6 +56,7 @@ class PredicateAtom(Atom):
 
     arity: int = -1
     roles: Tuple[Role, ...] = field(default_factory=tuple)
+    template: Optional[str] = None
 
     # Structural constraints (safe to keep here; enforcement belongs in AtomSpace)
     anti_reflexive: bool = False  # disallow repeated args (when enforced)
