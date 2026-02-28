@@ -150,18 +150,3 @@ class RetrieveAPI:
                 out.append((lid, lk.args))
 
         return out
-
-        out: List[Tuple[AtomId, Tuple[AtomId, ...]]] = []
-        for lid in self.A._by_pred.get(pid, set()):
-            lk = self.A._atoms[lid]
-            assert isinstance(lk, Link)
-            if len(lk.args) != len(pools):
-                continue
-                ok = True
-                for got, pool in zip(lk.args, pools):
-                    if got not in pool:
-                        ok = False
-                        break
-                if ok:
-                    out.append((lid, lk.args))
-            return out
