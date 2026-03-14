@@ -8,56 +8,292 @@ from .atoms import AtomId
 
 # One canonical place: what predicates exist + their structural metadata.
 # Add to this dict and you're basically done.
+from typing import Dict, Any
+
 DEFAULT_PREDICATE_SPECS: Dict[str, Dict[str, Any]] = {
+    # --- Core ontology ---
     "IsA": dict(
         arity=2,
         roles=("instance", "class"),
+        template="{instance} is a {class}",
         anti_reflexive=True,
         acyclic=True,
     ),
-    "HasA": dict(arity=2, roles=("owner", "thing"), template="{owner} has {thing}"),
-    "Wants": dict(
-        arity=2, roles=("agent", "target"), template="{agent} wants {target}"
+    "HasA": dict(
+        arity=2,
+        roles=("owner", "thing"),
+        template="{owner} has {thing}",
     ),
-    "Because": dict(
-        arity=-1,
-        roles=("conclusion", "evidence"),
-        template="{conclusion} because {evidence}",
+    "Called": dict(
+        arity=2,
+        roles=("thing", "name"),
+        template="{thing} is called {name}",
+    ),
+    # --- Mental / epistemic ---
+    "Wants": dict(
+        arity=2,
+        roles=("agent", "target"),
+        template="{agent} wants {target}",
     ),
     "Believes": dict(
         arity=2,
         roles=("agent", "proposition"),
         template="{agent} believes {proposition}",
     ),
-    "HappensAt": dict(arity=2, roles=("proposition", "time")),
-    # Story framing v0 (uncomment when you're ready)
-    "Does": dict(arity=2, roles=("Agent", "Action"), template="{Agent} does {action}"),
-    "At": dict(arity=2, roles=("thing", "place"), template="{thing} is at {place}"),
-    "Claims": dict(arity=2, roles=("speaker", "proposition")),
-    "Called": dict(arity=2, roles=("thing", "name")),
-    "Causes": dict(arity=2, roles=("cause", "effect")),
-    "During": dict(arity=2, roles=("Any", "Any")),
-    "With": dict(arity=2, roles=("Any", "Any")),
-    "IsFeeling": dict(arity=2, roles=("Any", "Any")),
-    "Sees": dict(arity=2, roles=("agent", "thing")),
-    # Arity 1 Wrappers
+    "Claims": dict(
+        arity=2,
+        roles=("speaker", "proposition"),
+        template="{speaker} claims {proposition}",
+    ),
+    "Knows": dict(
+        arity=2,
+        roles=("agent", "fact"),
+        template="{agent} knows {fact}",
+    ),
+    "Learns": dict(
+        arity=2,
+        roles=("agent", "topic"),
+        template="{agent} learns {topic}",
+    ),
+    "Fears": dict(
+        arity=2,
+        roles=("agent", "thing"),
+        template="{agent} fears {thing}",
+    ),
+    "Trusts": dict(
+        arity=2,
+        roles=("agent", "other"),
+        template="{agent} trusts {other}",
+    ),
+    "Distrusts": dict(
+        arity=2,
+        roles=("agent", "other"),
+        template="{agent} distrusts {other}",
+    ),
+    # --- Causality / logic / time ---
+    "Because": dict(
+        arity=-1,
+        roles=("conclusion", "evidence"),
+        template="{conclusion} because {evidence}",
+    ),
+    "Causes": dict(
+        arity=2,
+        roles=("cause", "effect"),
+        template="{cause} causes {effect}",
+    ),
+    "LeadsTo": dict(
+        arity=2,
+        roles=("source", "outcome"),
+        template="{source} leads to {outcome}",
+    ),
+    "HappensAt": dict(
+        arity=2,
+        roles=("proposition", "time"),
+        template="{proposition} happens at {time}",
+    ),
+    "During": dict(
+        arity=2,
+        roles=("event", "time_or_event"),
+        template="{event} happens during {time_or_event}",
+    ),
+    "Changes": dict(
+        arity=2,
+        roles=("thing", "new_state"),
+        template="{thing} changes to {new_state}",
+    ),
+    # --- Action / interaction / state ---
+    "Does": dict(
+        arity=2,
+        roles=("agent", "action"),
+        template="{agent} does {action}",
+    ),
+    "At": dict(
+        arity=2,
+        roles=("thing", "place"),
+        template="{thing} is at {place}",
+    ),
+    "With": dict(
+        arity=2,
+        roles=("thing", "other"),
+        template="{thing} is with {other}",
+    ),
+    "IsFeeling": dict(
+        arity=2,
+        roles=("agent", "feeling"),
+        template="{agent} is feeling {feeling}",
+    ),
+    "Sees": dict(
+        arity=2,
+        roles=("agent", "thing"),
+        template="{agent} sees {thing}",
+    ),
+    "Can": dict(
+        arity=2,
+        roles=("agent", "ability"),
+        template="{agent} can {ability}",
+    ),
+    "Needs": dict(
+        arity=2,
+        roles=("agent", "thing"),
+        template="{agent} needs {thing}",
+    ),
+    "Uses": dict(
+        arity=2,
+        roles=("agent", "thing"),
+        template="{agent} uses {thing}",
+    ),
+    "Consumes": dict(
+        arity=2,
+        roles=("agent", "resource"),
+        template="{agent} consumes {resource}",
+    ),
+    # --- Unary wrappers / logical helpers ---
     "Axiom": dict(
-        arity=1, roles=("proposition")
-    ),  # This is the "always and definitely true fact
-    "Not": dict(arity=1, roles=("proposition",)),
-    # --- Personal/world seed predicates (Excel CSV-friendly) ---
-    "WorksAt": dict(arity=2, roles=("person", "organization")),
-    "LivesIn": dict(arity=2, roles=("person", "place")),
-    "Builds": dict(arity=2, roles=("builder", "project")),
-    "IsWorkingOn": dict(arity=2, roles=("person", "project")),
-    "Loves": dict(arity=2, roles=("lover", "beloved")),
-    "Encourages": dict(arity=2, roles=("person", "person")),
-    "Teaches": dict(arity=3, roles=("teacher", "student", "topic")),
-    "Enjoys": dict(arity=2, roles=("person", "thing")),
-    "Prefers": dict(arity=2, roles=("person", "thing")),
-    "Dislikes": dict(arity=2, roles=("person", "thing")),
-    "Plays": dict(arity=2, roles=("person", "game_or_activity")),
-    "Likes": dict(arity=2, roles=("person", "thing")),
+        arity=1,
+        roles=("proposition",),
+        template="it is axiomatic that {proposition}",
+    ),
+    "Not": dict(
+        arity=1,
+        roles=("proposition",),
+        template="it is not true that {proposition}",
+    ),
+    # --- Personal / world seed predicates ---
+    "WorksAt": dict(
+        arity=2,
+        roles=("person", "organization"),
+        template="{person} works at {organization}",
+    ),
+    "LivesIn": dict(
+        arity=2,
+        roles=("person", "place"),
+        template="{person} lives in {place}",
+    ),
+    "Builds": dict(
+        arity=2,
+        roles=("builder", "project"),
+        template="{builder} builds {project}",
+    ),
+    "IsWorkingOn": dict(
+        arity=2,
+        roles=("person", "project"),
+        template="{person} is working on {project}",
+    ),
+    "Loves": dict(
+        arity=2,
+        roles=("lover", "beloved"),
+        template="{lover} loves {beloved}",
+    ),
+    "Likes": dict(
+        arity=2,
+        roles=("person", "thing"),
+        template="{person} likes {thing}",
+    ),
+    "Enjoys": dict(
+        arity=2,
+        roles=("person", "thing"),
+        template="{person} enjoys {thing}",
+    ),
+    "Prefers": dict(
+        arity=2,
+        roles=("person", "thing"),
+        template="{person} prefers {thing}",
+    ),
+    "Dislikes": dict(
+        arity=2,
+        roles=("person", "thing"),
+        template="{person} dislikes {thing}",
+    ),
+    "Plays": dict(
+        arity=2,
+        roles=("person", "game_or_activity"),
+        template="{person} plays {game_or_activity}",
+    ),
+    "Encourages": dict(
+        arity=2,
+        roles=("person", "other"),
+        template="{person} encourages {other}",
+    ),
+    "Teaches": dict(
+        arity=3,
+        roles=("teacher", "student", "topic"),
+        template="{teacher} teaches {student} about {topic}",
+    ),
+    "HasSkill": dict(
+        arity=2,
+        roles=("agent", "skill"),
+        template="{agent} has the skill {skill}",
+    ),
+    "SkillLevel": dict(
+        arity=3,
+        roles=("agent", "skill", "level"),
+        template="{agent}'s {skill} skill is level {level}",
+    ),
+    "HasSpell": dict(
+        arity=2,
+        roles=("agent", "spell"),
+        template="{agent} knows the spell {spell}",
+    ),
+    "Casts": dict(
+        arity=2,
+        roles=("caster", "spell"),
+        template="{caster} casts {spell}",
+    ),
+    "SpellEffect": dict(
+        arity=2,
+        roles=("spell", "effect"),
+        template="{spell} produces {effect}",
+    ),
+    "HasMana": dict(
+        arity=2,
+        roles=("agent", "amount"),
+        template="{agent} has {amount} mana",
+    ),
+    "ManaCost": dict(
+        arity=2,
+        roles=("spell", "amount"),
+        template="{spell} costs {amount} mana",
+    ),
+    "RequiresSkill": dict(
+        arity=2,
+        roles=("ability", "skill"),
+        template="{ability} requires the skill {skill}",
+    ),
+    "Discovers": dict(
+        arity=2,
+        roles=("agent", "thing"),
+        template="{agent} discovers {thing}",
+    ),
+    "Guides": dict(
+        arity=2,
+        roles=("guide", "other"),
+        template="{guide} guides {other}",
+    ),
+    "Trains": dict(
+        arity=2,
+        roles=("trainer", "student"),
+        template="{trainer} trains {student}",
+    ),
+    "IsDangerous": dict(
+        arity=1,
+        roles=("thing",),
+        template="{thing} is dangerous",
+    ),
+    "ExperimentsWith": dict(
+        arity=2,
+        roles=("agent", "thing"),
+        template="{agent} experiments with {thing}",
+    ),
+    "HasClass": dict(
+        arity=2,
+        roles=("agent", "class"),
+        template="{agent} has the class {class}",
+    ),
+    "HasTrait": dict(
+        arity=2,
+        roles=("agent", "trait"),
+        template="{agent} has the trait {trait}",
+    ),
 }
 
 
