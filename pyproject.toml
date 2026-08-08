@@ -4,9 +4,9 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "atomforge"
-version = "0.0.1"
+version = "0.0.2"
 description = "Atomspace reasoning graph"
 
 [tool.setuptools]
-packages = ["atomforge"]
+packages = ["atomforge","memory_manager"]
 
