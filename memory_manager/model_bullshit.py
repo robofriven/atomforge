@@ -3,13 +3,15 @@ import logging
 import requests
 
 logger = logging.getLogger(__name__)
+model = "moonshotai/kimi-k3"
+glm = "z-ai/glm-5.2"
 
 
 class ModelBullshit:
     def __init__(self):
         self.url = "https://openrouter.ai/api/v1/chat/completions"
-        self.api_key = os.environ["OPENROUTER_API_KE"]
-        self.model = "z-ai/glm-5.2"
+        self.api_key = os.environ["OPENROUTER_API_KEY"]
+        self.model = glm
 
     def ask(self, prompt: str) -> str:
         logger.info("Sending prompt to %s: %s", self.model, prompt)
