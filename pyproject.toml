@@ -5,8 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "atomforge"
 version = "0.0.2"
-description = "Atomspace reasoning graph"
+description = "Domain-agnostic atom graph with indexed and topological relationships"
 
 [tool.setuptools]
-packages = ["atomforge","memory_manager"]
-
+packages = ["atomforge"]

@@ -4,7 +4,8 @@ import re
 from dataclasses import dataclass
 from typing import Dict, List, Tuple
 
-from .atoms import AtomId, Node, Link, KindAtom, PredicateAtom
+from .atoms import AtomId, KindAtom, Ligature, Link, Node, PredicateAtom
+from .facade import AtomSpaceAPI
 
 # Compile once
 _TEMPLATE_TOKEN = re.compile(r"\{(?:(a|paren|join):)?([A-Za-z_][A-Za-z0-9_]*)\}")
@@ -30,20 +31,24 @@ class RenderOptions:
 
 
 class Renderer:
-    def __init__(self, space) -> None:
-        self.space = space
+    def __init__(self, api: AtomSpaceAPI) -> None:
+        if not isinstance(api, AtomSpaceAPI):
+            raise TypeError("Renderer requires an AtomSpaceAPI facade")
+        self.api = api
 
     # -----------------------
     # Structural renderer (debug)
     # -----------------------
 
     def render(self, atom_id: AtomId, *, opts: RenderOptions = RenderOptions()) -> str:
-        atom = self.space._atoms[atom_id]
+        atom = self.api.get(atom_id)
+        if atom is None:
+            return self._maybe_id("<deleted>", atom_id, opts)
 
         if isinstance(atom, Node):
             text = atom.label or f"Node#{atom_id}"
             if opts.show_kinds and atom.kind:
-                kind_atom = self.space._atoms.get(atom.kind)
+                kind_atom = self.api.get(atom.kind)
                 kind_name = getattr(kind_atom, "label", str(atom.kind))
                 text = f"{text}:{kind_name}"
             return self._maybe_id(text, atom_id, opts)
@@ -59,6 +64,9 @@ class Renderer:
         if isinstance(atom, Link):
             return self.render_link(atom_id, opts=opts)
 
+        if isinstance(atom, Ligature):
+            return self.render_ligature(atom_id, opts=opts)
+
         return self._maybe_id(f"Atom#{atom_id}", atom_id, opts)
 
     def render_link(
@@ -66,14 +74,39 @@ class Renderer:
     ) -> str:
         return self._render_link_inner(link_id, depth=opts.max_depth, opts=opts)
 
+    def render_ligature(
+        self, ligature_id: AtomId, *, opts: RenderOptions = RenderOptions()
+    ) -> str:
+        return self._render_ligature_inner(
+            ligature_id, depth=opts.max_depth, opts=opts
+        )
+
+    def _render_ligature_inner(
+        self, ligature_id: AtomId, depth: int, *, opts: RenderOptions
+    ) -> str:
+        atom = self.api.get(ligature_id)
+        if atom is None:
+            return self._maybe_id("<deleted>", ligature_id, opts)
+        if not isinstance(atom, Ligature):
+            return self.render(ligature_id, opts=opts)
+        if depth <= 0:
+            return self._maybe_id(f"{atom.name}(...)", ligature_id, opts)
+        inside = ", ".join(
+            self._render_arg(atom_id, depth - 1, opts=opts)
+            for atom_id in atom.args
+        )
+        return self._maybe_id(f"{atom.name}({inside})", ligature_id, opts)
+
     def _render_link_inner(
         self, link_id: AtomId, depth: int, *, opts: RenderOptions
     ) -> str:
-        atom = self.space._atoms[link_id]
+        atom = self.api.get(link_id)
+        if atom is None:
+            return self._maybe_id("<deleted>", link_id, opts)
         if not isinstance(atom, Link):
             return self.render(link_id, opts=opts)
 
-        pred_atom = self.space._atoms.get(atom.predicate)
+        pred_atom = self.api.get(atom.predicate)
         pred_name = getattr(pred_atom, "label", None) or f"Pred#{atom.predicate}"
 
         if depth <= 0:
@@ -96,9 +129,13 @@ class Renderer:
         return self._maybe_id(text, link_id, opts)
 
     def _render_arg(self, atom_id: AtomId, depth: int, *, opts: RenderOptions) -> str:
-        atom = self.space._atoms[atom_id]
+        atom = self.api.get(atom_id)
+        if atom is None:
+            return "<deleted>"
         if isinstance(atom, Link):
             return self._render_link_inner(atom_id, depth=depth, opts=opts)
+        if isinstance(atom, Ligature):
+            return self._render_ligature_inner(atom_id, depth=depth, opts=opts)
         return self.render(atom_id, opts=opts)
 
     # -----------------------
@@ -106,13 +143,19 @@ class Renderer:
     # -----------------------
 
     def render_pretty(self, atom_id: AtomId, *, depth: int = 4) -> str:
-        atom = self.space._atoms[atom_id]
+        atom = self.api.get(atom_id)
+        if atom is None:
+            return "<deleted>"
         if isinstance(atom, Link):
             return self._render_link_pretty(atom, depth=depth)
+        if isinstance(atom, Ligature):
+            return self._render_ligature_pretty(atom, depth=depth)
         return self._render_atom_pretty(atom_id)
 
     def _render_atom_pretty(self, atom_id: AtomId) -> str:
-        atom = self.space._atoms[atom_id]
+        atom = self.api.get(atom_id)
+        if atom is None:
+            return "<deleted>"
         if isinstance(atom, Node):
             return atom.label or f"#{atom_id}"
         return self.render(atom_id)
@@ -142,14 +185,14 @@ class Renderer:
         Template tokens support:
           {role}             -> substituted value
           {a:role}           -> adds a/an article
-          {paren:role}       -> wraps in (...) if that arg is a Link
+          {paren:role}       -> wraps in (...) if that arg is a Link or Ligature
           {join:role}        -> joins all args mapped to that role (useful for variadic)
         Always provides arg0, arg1, ... keys.
         """
         if depth <= 0:
             return "…"
 
-        pred_atom = self.space._atoms.get(link.predicate)
+        pred_atom = self.api.get(link.predicate)
         template = getattr(pred_atom, "template", None) if pred_atom else None
 
         # No template? Fall back to structural renderer.
@@ -159,19 +202,21 @@ class Renderer:
         def r(aid: AtomId) -> str:
             return self.render_pretty(aid, depth=depth - 1)
 
-        def is_link(aid: AtomId) -> bool:
-            return isinstance(self.space._atoms.get(aid), Link)
+        def is_relationship(aid: AtomId) -> bool:
+            return isinstance(self.api.get(aid), (Link, Ligature))
 
         mapping: Dict[str, str] = {}
         role_to_vals: Dict[str, List[Tuple[AtomId, str]]] = {}
-
-        roles = getattr(pred_atom, "roles", None) if pred_atom else None
 
         for i, aid in enumerate(link.args):
             txt = r(aid)
             mapping[f"arg{i}"] = txt
 
-            role_name = roles[i] if roles and i < len(roles) else ""
+            role_name = (
+                pred_atom.role_for_index(i)
+                if isinstance(pred_atom, PredicateAtom)
+                else None
+            ) or ""
             key = _norm_role(role_name, i)
 
             # Add role-key mapping if it isn't already set.
@@ -194,7 +239,7 @@ class Renderer:
 
             if directive == "paren":
                 vals = role_to_vals.get(key, [])
-                if vals and is_link(vals[0][0]):
+                if vals and is_relationship(vals[0][0]):
                     return f"({vals[0][1]})"
                 return txt
 
@@ -203,9 +248,13 @@ class Renderer:
         out = _TEMPLATE_TOKEN.sub(repl, template.strip())
         return out
 
+    def _render_ligature_pretty(self, ligature: Ligature, *, depth: int) -> str:
+        if depth <= 0:
+            return "…"
+        return f"{ligature.name}({', '.join(self.render_pretty(atom_id, depth=depth - 1) for atom_id in ligature.args)})"
+
     @staticmethod
     def _maybe_id(text: str, atom_id: AtomId, opts: RenderOptions) -> str:
         if opts.show_ids:
             return f"{text}#{atom_id}"
         return text
-

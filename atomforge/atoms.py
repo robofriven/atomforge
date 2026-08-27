@@ -1,13 +1,10 @@
-# atoms.py
-# Core atom definitions (no AtomSpace here).
-#
-# One ID space. Everything is an Atom:
-#   - Nodes are atoms
-#   - Links (statements) are atoms
-#   - KindAtoms (node categories) are atoms
-#   - PredicateAtoms (statement forms) are atoms
-#
-# This file defines data shapes only. Enforcement/validation belongs in AtomSpace.
+"""Immutable data shapes for AtomForge's single AtomId space.
+
+Node is a thing. Link is a predicate-backed, globally indexed relationship.
+Ligature is a named semantic relationship discovered through topology.
+KindAtom defines Node categories, and PredicateAtom defines Link forms.
+Enforcement, storage, and indexing belong to Core.
+"""
 
 from __future__ import annotations
 
@@ -29,18 +26,14 @@ class Atom:
 
 @dataclass(frozen=True, slots=True)
 class KindAtom(Atom):
-    """
-    Canonical kind/category for nodes (Entity, Class, TimeInstant, Proposition, ...).
-    Still "just an atom". AtomSpace decides how (or if) to enforce.
-    """
+    """A canonical category that may be referenced by ``Node.kind``."""
 
     pass
 
 
 @dataclass(frozen=True, slots=True)
 class PredicateAtom(Atom):
-    """
-    The 'idea of a relationship': IsA, HasA, Wants, Believes, Not, Because...
+    """The structural form of predicate-backed ``Link`` relationships.
 
     arity:
       - >= 0 means fixed-arity
@@ -48,10 +41,9 @@ class PredicateAtom(Atom):
 
     roles:
       - OPTIONAL, descriptive labels for argument positions (slot names).
-      - Do NOT need to be unique. Example: Between could use ("thing","thing","thing").
+      - Do not need to be unique.
       - For variadic predicates, roles can be used as a prefix:
-          Because(conclusion, e1, e2, e3...)
-          roles=("conclusion","evidence") -> slot0=conclusion; slot>=1 repeats "evidence"
+          roles=("head","member") -> slot0=head; slot>=1 repeats "member"
     """
 
     arity: int = -1
@@ -60,7 +52,7 @@ class PredicateAtom(Atom):
 
     # Structural constraints (safe to keep here; enforcement belongs in AtomSpace)
     anti_reflexive: bool = False  # disallow repeated args (when enforced)
-    acyclic: bool = False  # disallow cycles (typically for IsA/PartOf) (when enforced)
+    acyclic: bool = False  # disallow cycles for binary Links (when enforced)
 
     def check_arity(self, n_args: int) -> None:
         if self.arity != -1 and n_args != self.arity:
@@ -89,11 +81,7 @@ class PredicateAtom(Atom):
 
 @dataclass(frozen=True, slots=True)
 class Node(Atom):
-    """
-    A 'thing' in the graph (Greg, Potato, Tuesday).
-    kind points to a KindAtom.
-    props is optional metadata; keep it immutable (tuple) for hashability.
-    """
+    """A thing with an optional ``KindAtom`` reference and immutable properties."""
 
     kind: AtomId = 0
     props: Tuple[Tuple[str, Any], ...] = field(default_factory=tuple)
@@ -101,11 +89,7 @@ class Node(Atom):
 
 @dataclass(frozen=True, slots=True)
 class Link(Atom):
-    """
-    A statement/hyperedge: predicate(args...)
-    predicate points to a PredicateAtom.
-    args can be any atoms (nodes, links, predicates, kinds... everything is an atom).
-    """
+    """A globally predicate-indexed relationship between arbitrary atoms."""
 
     predicate: AtomId = 0
     args: Tuple[AtomId, ...] = field(default_factory=tuple)
@@ -113,3 +97,39 @@ class Link(Atom):
     @property
     def arity(self) -> int:
         return len(self.args)
+
+
+@dataclass(frozen=True, slots=True)
+class Ligature(Atom):
+    """A named semantic relationship reached only through graph topology.
+
+    Its name belongs to this relationship atom. It has no PredicateAtom and no
+    global relation-type index.
+    """
+
+    name: str = ""
+    args: Tuple[AtomId, ...] = field(default_factory=tuple)
+
+    @property
+    def arity(self) -> int:
+        return len(self.args)
+
+
+@dataclass(frozen=True, slots=True)
+class RawAtomResult:
+    atom: Atom
+    atom_id: AtomId
+    confidence: float
+    deleted: bool
+
+
+@dataclass(frozen=True, slots=True)
+class SearchResult:
+    atom: Atom
+    matched_id: AtomId
+
+
+@dataclass(frozen=True, slots=True)
+class TraversalResult:
+    atom: Atom
+    matched_id: AtomId

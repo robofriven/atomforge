@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple, Union
 
-from .core import AtomSpace
+from .facade import AtomSpaceAPI
 from .atoms import AtomId
 
 
@@ -43,14 +43,14 @@ def _first_nonempty(values: Iterable[str]) -> Optional[str]:
 
 
 def import_links_csv(
-    space: AtomSpace,
+    space: AtomSpaceAPI,
     path: Union[str, Path],
     *,
     predicate_col: str = "predicate",
     label_col: str = "label",
     arg_prefix: str = "arg",
     create_missing_nodes: bool = True,
-    default_kind: str = "Entity",
+    default_kind: Union[str, AtomId] = 0,
 ) -> ImportReport:
     """
     Excel-friendly link importer.
@@ -83,7 +83,7 @@ def import_links_csv(
         if not create_missing_nodes:
             raise KeyError(f"links.csv references unknown label {lbl!r}")
 
-        nid = space.add.node(lbl, kind=default_kind, intern=True)
+        nid = space.create_node(lbl, kind=default_kind, intern=True)
         label_cache[lbl] = nid
         report.nodes_created += 1
         report.created_node_labels.append(lbl)
@@ -139,7 +139,7 @@ def import_links_csv(
                 link_label = _first_nonempty([row.get(label_col, "")])
 
             try:
-                space.add.link(pred, *arg_ids, label=link_label)
+                space.create_link(pred, *arg_ids, label=link_label)
             except KeyError as e:
                 raise KeyError(f"Row {row_i}: {e}") from e
 
