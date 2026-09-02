@@ -1,6 +1,7 @@
 from .atoms import (
     Atom, AtomId, KindAtom, Ligature, Link, Node, PredicateAtom,
-    RawAtomResult, SearchResult, TraversalResult,
+    Intersection, RawAtomResult, SearchResult, StructuralSearchResult,
+    TraversalResult,
 )
 from .core import SCHEMA_VERSION
 from .facade import AtomSpaceAPI
@@ -15,7 +16,7 @@ from .infrastructure import (
 __all__ = [
     "AtomSpaceAPI", "Atom", "AtomId", "Node", "Link", "Ligature", "KindAtom",
     "PredicateAtom", "RawAtomResult",
-    "SearchResult", "TraversalResult",
+    "SearchResult", "TraversalResult", "StructuralSearchResult", "Intersection",
     "SCHEMA_VERSION", "AtomForgeError", "UnknownAtomError",
     "UnknownPredicateError", "InvalidAtomOperationError",
     "AlreadyDeletedError", "InvalidConfidenceError",

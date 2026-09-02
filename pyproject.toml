@@ -8,4 +8,4 @@ version = "0.0.2"
 description = "Domain-agnostic atom graph with indexed and topological relationships"
 
 [tool.setuptools]
-packages = ["atomforge"]
+packages = ["atomforge", "atomforge.retrieval"]

@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Tuple, Type, Union
+from typing import Any, Dict, Iterable, List, Optional, Set, Tuple, Type, Union
 
 from .atoms import (
     Atom,
     AtomId,
+    Intersection,
     RawAtomResult,
     SearchResult,
+    StructuralSearchResult,
     TraversalResult,
 )
 from .core import AtomSpace
@@ -158,6 +160,23 @@ class AtomSpaceAPI:
         self, start: AtomId, *, max_depth: Optional[int] = None
     ) -> List[RawAtomResult]:
         return self.__space.traverse_raw(start, max_depth=max_depth)
+
+    def intersection(
+        self, seeds: Iterable[AtomId], *, max_depth: int
+    ) -> List[Intersection]:
+        return self.__space.intersection(seeds, max_depth=max_depth)
+
+    def containers(
+        self, start: AtomId, container_definition: AtomId, *, max_depth: int
+    ) -> List[StructuralSearchResult]:
+        return self.__space.containers(
+            start, container_definition, max_depth=max_depth
+        )
+
+    def nearest_hub(
+        self, start: AtomId, *, max_depth: int
+    ) -> List[StructuralSearchResult]:
+        return self.__space.nearest_hub(start, max_depth=max_depth)
 
     def find_by_label(self, label: str) -> List[AtomId]:
         return self.__space.find_by_label(label)

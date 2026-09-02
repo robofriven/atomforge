@@ -10,7 +10,8 @@ from typing import Any, Dict, Iterable, List, Optional, Set, Tuple, Type, Union
 
 from .atoms import (
     Atom, AtomId, KindAtom, Ligature, Link, Node, PredicateAtom,
-    RawAtomResult, SearchResult, TraversalResult,
+    Intersection, RawAtomResult, SearchResult, StructuralSearchResult,
+    TraversalResult,
 )
 from .infrastructure import (
     AlreadyDeletedError, DuplicateCurrentError, GraphInvariantError,
@@ -663,6 +664,7 @@ class AtomSpace:
     def traverse_raw(
         self, start: AtomId, *, max_depth: Optional[int] = None
     ) -> List[RawAtomResult]:
+        """Traverse physical topology without crossing Node-to-Kind edges."""
         self._require_physical(start)
         queue, seen, results = deque([(start, 0)]), set(), []
         while queue:
@@ -670,12 +672,13 @@ class AtomSpace:
             if atom_id in seen:
                 continue
             seen.add(atom_id)
-            results.append(self.get_raw(atom_id))
+            raw = self.get_raw(atom_id)
+            results.append(RawAtomResult(
+                raw.atom, raw.atom_id, raw.confidence, raw.deleted, depth
+            ))
             if max_depth is not None and depth >= max_depth:
                 continue
             atom = self._atoms[atom_id]
-            if isinstance(atom, Node) and atom.kind:
-                queue.append((atom.kind, depth + 1))
             if isinstance(atom, Link):
                 queue.append((atom.predicate, depth + 1))
                 queue.extend((arg, depth + 1) for arg in atom.args)
@@ -698,11 +701,9 @@ class AtomSpace:
                 continue
             seen.add(atom_id)
             atom = self._atoms[atom_id]
-            results.append(TraversalResult(atom, atom_id))
+            results.append(TraversalResult(atom, atom_id, depth))
             if max_depth is not None and depth >= max_depth:
                 continue
-            if isinstance(atom, Node) and atom.kind:
-                queue.append((atom.kind, depth + 1))
             if isinstance(atom, Link):
                 queue.append((atom.predicate, depth + 1))
                 queue.extend((arg, depth + 1) for arg in atom.args)
@@ -713,6 +714,58 @@ class AtomSpace:
                 for relationship_id in self._in_links.get(atom_id, set())
             )
         return results
+
+    def containers(
+        self, start: AtomId, container_definition: AtomId, *, max_depth: int
+    ) -> List[StructuralSearchResult]:
+        """Return reachable Nodes of the requested Kind and their distances."""
+        container_kind = self._resolve_kind(container_definition)
+        return [
+            StructuralSearchResult(result.matched_id, result.depth)
+            for result in self.traverse(start, max_depth=max_depth)
+            if isinstance(result.atom, Node)
+            and result.atom.kind == container_kind
+        ]
+
+    def nearest_hub(
+        self, start: AtomId, *, max_depth: int
+    ) -> List[StructuralSearchResult]:
+        """Return all nearest Nodes whose canonical Kind is ``Hub``."""
+        hub_id = self._kind_intern.get("Hub")
+        if hub_id is None or self._is_deleted(hub_id):
+            return []
+        nearest_depth: Optional[int] = None
+        results: List[StructuralSearchResult] = []
+        for result in self.traverse(start, max_depth=max_depth):
+            if nearest_depth is not None and result.depth > nearest_depth:
+                break
+            if isinstance(result.atom, Node) and result.atom.kind == hub_id:
+                nearest_depth = result.depth
+                results.append(StructuralSearchResult(
+                    result.matched_id, result.depth
+                ))
+        return results
+
+    def intersection(
+        self, seeds: Iterable[AtomId], *, max_depth: int
+    ) -> List[Intersection]:
+        """Return atoms reached by at least two seed traversals."""
+        seed_set = set(seeds)
+        depths_by_atom: Dict[AtomId, Dict[AtomId, int]] = {}
+
+        for seed in seed_set:
+            for result in self.traverse(seed, max_depth=max_depth):
+                depths_by_atom.setdefault(result.matched_id, {})[seed] = result.depth
+
+        return [
+            Intersection(
+                atom_id=atom_id,
+                seeds=set(seed_set),
+                depths={seed: reached.get(seed, -1) for seed in seed_set},
+            )
+            for atom_id, reached in sorted(depths_by_atom.items())
+            if len(reached) >= 2
+        ]
 
     def pretty(self, atom_id: AtomId, *, max_depth: int = 2) -> str:
         def render(target: int, depth: int) -> str:

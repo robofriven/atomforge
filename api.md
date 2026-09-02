@@ -380,10 +380,13 @@ api.traverse(
 ) -> list[TraversalResult]
 ```
 
-Traverses logical topology. It follows Node kinds, Link predicates and
-arguments, Ligature connections, and incoming relationships, but hard-stops at
-deleted atoms and relationships and never crosses through them. Each result
-contains `atom` and permanent `matched_id`.
+Traverses logical topology breadth-first. It follows Link predicates and
+arguments, Ligature connections, and incoming relationships, but does not
+follow `Node.kind` definition edges. This Kind boundary prevents a search from
+escaping through a shared definition into unrelated graph structure. Traversal
+hard-stops at deleted atoms and relationships and never crosses through them.
+Each result contains `atom`, permanent `matched_id`, and `depth`, where the
+starting atom has depth zero.
 
 ### `traverse_raw`
 
@@ -396,8 +399,41 @@ api.traverse_raw(
 ```
 
 Traverses purely physical topology and includes deleted atoms with their raw
-deletion status. This operation does not call logical resolution or filtering
+deletion status and traversal `depth`. It uses the same Kind boundary as
+logical traversal. This operation does not call logical resolution or filtering
 helpers.
+
+### `containers`
+
+```python
+api.containers(
+    start: AtomId,
+    container_definition: AtomId,
+    *,
+    max_depth: int,
+) -> list[StructuralSearchResult]
+```
+
+Traverses outward from `start` and returns each reachable live `Node` whose
+Kind is `container_definition`. Each result contains `atom_id` and its
+breadth-first `depth`. This is a structural, Kind-safe operation and performs no
+semantic ranking.
+
+### `nearest_hub`
+
+```python
+api.nearest_hub(
+    start: AtomId,
+    *,
+    max_depth: int,
+) -> list[StructuralSearchResult]
+```
+
+Returns the nearest reachable live Nodes whose canonical Kind is `Hub`. All
+hubs at the minimum discovered depth are returned; farther hubs are excluded.
+Each result contains `atom_id` and `depth`. An empty list is returned when no
+hub is reachable within `max_depth` or no live canonical `Hub` Kind exists.
+This operation is Kind-safe and does not rank equally distant hubs.
 
 ## Confidence
 
@@ -496,7 +532,8 @@ For template-based rendering, pass the facade to
 - `PredicateAtom(arity, roles, template, anti_reflexive, acyclic)`
 - `RawAtomResult(atom, atom_id, confidence, deleted)`
 - `SearchResult(atom, matched_id)`
-- `TraversalResult(atom, matched_id)`
+- `TraversalResult(atom, matched_id, depth)`
+- `StructuralSearchResult(atom_id, depth)`
 
 ## Public errors
 

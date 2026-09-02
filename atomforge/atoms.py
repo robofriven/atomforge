@@ -121,6 +121,7 @@ class RawAtomResult:
     atom_id: AtomId
     confidence: float
     deleted: bool
+    depth: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -133,3 +134,17 @@ class SearchResult:
 class TraversalResult:
     atom: Atom
     matched_id: AtomId
+    depth: int = 0
+
+
+@dataclass
+class Intersection:
+    atom_id: AtomId
+    seeds: set[AtomId]
+    depths: dict[AtomId, int]
+
+
+@dataclass(frozen=True, slots=True)
+class StructuralSearchResult:
+    atom_id: AtomId
+    depth: int

@@ -45,3 +45,12 @@ assert api.get(delete_assertion).predicate == api.delete_predicate
 ```
 
 See [api.md](api.md) for the complete public API.
+
+Structural traversal is breadth-first, depth-aware, and Kind-safe: searches do
+not cross from a Node into its Kind definition. Core also provides deterministic
+container and nearest-hub searches for retrieval pipelines; semantic candidate
+selection and ranking remain application responsibilities.
+
+The optional [`atomforge.retrieval`](atomforge/retrieval/README.md) package
+implements the deterministic candidate → intersection → container → bounded
+context pipeline on top of the supported Core façade.

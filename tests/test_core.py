@@ -8,8 +8,8 @@ from pathlib import Path
 from atomforge import (
     AlreadyDeletedError, AtomSpaceAPI, DuplicateCurrentError,
     GraphInvariantError, InvalidAtomOperationError, InvalidConfidenceError,
-    KindAtom, Ligature, Link, Node, PredicateAtom, SchemaVersionError,
-    SearchResult, UnknownAtomError, UnknownPredicateError,
+    Intersection, KindAtom, Ligature, Link, Node, PredicateAtom, SchemaVersionError,
+    SearchResult, StructuralSearchResult, UnknownAtomError, UnknownPredicateError,
 )
 from atomforge.core import AtomSpace
 from atomforge.renderer import Renderer
@@ -314,6 +314,188 @@ class CoreTests(unittest.TestCase):
         self.assertTrue(next(r for r in raw if r.atom_id == middle).deleted)
         self.assertTrue(next(r for r in raw if r.atom_id == first).deleted)
         self.assertTrue(next(r for r in raw if r.atom_id == second).deleted)
+
+    def test_traversal_reports_breadth_first_depths(self):
+        api = AtomSpaceAPI.create()
+        start = api.create_node("start")
+        middle = api.create_node("middle")
+        end = api.create_node("end")
+        first = api.create_ligature("First", start, middle)
+        second = api.create_ligature("Second", middle, end)
+
+        self.assertEqual(
+            {item.matched_id: item.depth for item in api.traverse(start)},
+            {start: 0, first: 1, middle: 2, second: 3, end: 4},
+        )
+        self.assertEqual(
+            {item.atom_id: item.depth for item in api.traverse_raw(start)},
+            {start: 0, first: 1, middle: 2, second: 3, end: 4},
+        )
+        self.assertEqual(
+            {item.matched_id for item in api.traverse(start, max_depth=2)},
+            {start, first, middle},
+        )
+
+    def test_logical_and_raw_traversal_do_not_cross_kind_edges(self):
+        api = AtomSpaceAPI.create()
+        kind = api.kind("SharedKind")
+        start = api.create_node("start", kind=kind)
+        unrelated = api.create_node("unrelated")
+        bridge = api.create_ligature("DefinitionMetadata", kind, unrelated)
+
+        self.assertEqual(
+            {item.matched_id for item in api.traverse(start, max_depth=5)},
+            {start},
+        )
+        self.assertEqual(
+            {item.atom_id for item in api.traverse_raw(start, max_depth=5)},
+            {start},
+        )
+        self.assertNotIn(bridge, {
+            item.matched_id for item in api.traverse(start, max_depth=5)
+        })
+
+    def test_container_search_returns_depths_and_respects_maximum_depth(self):
+        api = AtomSpaceAPI.create()
+        container_kind = api.kind("Container")
+        start = api.create_node("start")
+        near = api.create_node("near", kind=container_kind)
+        far = api.create_node("far", kind=container_kind)
+        api.create_ligature("Near", start, near)
+        api.create_ligature("Far", near, far)
+
+        self.assertEqual(
+            api.containers(start, container_kind, max_depth=2),
+            [StructuralSearchResult(near, 2)],
+        )
+        self.assertEqual(
+            api.containers(start, container_kind, max_depth=4),
+            [StructuralSearchResult(near, 2), StructuralSearchResult(far, 4)],
+        )
+
+    def test_container_search_does_not_escape_through_kind(self):
+        api = AtomSpaceAPI.create()
+        source_kind = api.kind("Source")
+        container_kind = api.kind("Container")
+        start = api.create_node("start", kind=source_kind)
+        hidden = api.create_node("hidden", kind=container_kind)
+        api.create_ligature("KindBridge", source_kind, hidden)
+        self.assertEqual(api.containers(start, container_kind, max_depth=5), [])
+
+    def test_nearest_hub_returns_all_and_only_hubs_at_minimum_depth(self):
+        api = AtomSpaceAPI.create()
+        hub_kind = api.kind("Hub")
+        start = api.create_node("start")
+        left = api.create_node("left", kind=hub_kind)
+        right = api.create_node("right", kind=hub_kind)
+        farther = api.create_node("farther", kind=hub_kind)
+        api.create_ligature("Left", start, left)
+        api.create_ligature("Right", start, right)
+        api.create_ligature("Farther", left, farther)
+
+        self.assertEqual(
+            set(api.nearest_hub(start, max_depth=4)),
+            {StructuralSearchResult(left, 2), StructuralSearchResult(right, 2)},
+        )
+        self.assertEqual(api.nearest_hub(start, max_depth=1), [])
+
+    def test_nearest_hub_handles_start_no_hub_and_kind_boundary(self):
+        api = AtomSpaceAPI.create()
+        hub_kind = api.kind("Hub")
+        hub = api.create_node("hub", kind=hub_kind)
+        self.assertEqual(
+            api.nearest_hub(hub, max_depth=0),
+            [StructuralSearchResult(hub, 0)],
+        )
+        isolated = api.create_node("isolated")
+        self.assertEqual(api.nearest_hub(isolated, max_depth=10), [])
+        source_kind = api.kind("Source")
+        source = api.create_node("source", kind=source_kind)
+        api.create_ligature("KindBridge", source_kind, hub)
+        self.assertEqual(api.nearest_hub(source, max_depth=5), [])
+
+    def test_traversal_has_no_redirect_options(self):
+        api = AtomSpaceAPI.create()
+        node = api.create_node("node")
+        with self.assertRaises(TypeError):
+            api.traverse(node, follow_redirects=True)
+        with self.assertRaises(TypeError):
+            api.traverse_raw(node, follow_redirects=True)
+
+    def test_intersection_of_two_seeds(self):
+        api = AtomSpaceAPI.create()
+        left, right = api.create_node("left"), api.create_node("right")
+        shared = api.create_ligature("Shared", left, right)
+
+        self.assertEqual(
+            api.intersection([left, right], max_depth=1),
+            [
+                Intersection(
+                    atom_id=shared,
+                    seeds={left, right},
+                    depths={left: 1, right: 1},
+                )
+            ],
+        )
+
+    def test_intersection_returns_every_shared_atom(self):
+        api = AtomSpaceAPI.create()
+        left, right = api.create_node("left"), api.create_node("right")
+        first = api.create_ligature("First", left, right)
+        second = api.create_ligature("Second", left, right)
+
+        intersections = api.intersection([left, right], max_depth=1)
+        self.assertEqual({result.atom_id for result in intersections}, {first, second})
+
+    def test_intersection_of_three_seeds(self):
+        api = AtomSpaceAPI.create()
+        seeds = {api.create_node(str(index)) for index in range(3)}
+        shared = api.create_ligature("Shared", *seeds)
+
+        result = api.intersection(seeds, max_depth=1)
+        self.assertEqual([item.atom_id for item in result], [shared])
+        self.assertEqual(result[0].seeds, seeds)
+        self.assertEqual(result[0].depths, {seed: 1 for seed in seeds})
+
+    def test_intersection_marks_unreached_seed_with_minus_one(self):
+        api = AtomSpaceAPI.create()
+        left, right = api.create_node("left"), api.create_node("right")
+        isolated = api.create_node("isolated")
+        shared = api.create_ligature("Shared", left, right)
+
+        result = api.intersection([left, right, isolated], max_depth=1)
+        self.assertEqual([item.atom_id for item in result], [shared])
+        self.assertEqual(
+            result[0].depths, {left: 1, right: 1, isolated: -1}
+        )
+        self.assertEqual(result[0].seeds, {left, right, isolated})
+
+    def test_intersection_can_be_empty(self):
+        api = AtomSpaceAPI.create()
+        seeds = [api.create_node("left"), api.create_node("right")]
+        self.assertEqual(api.intersection(seeds, max_depth=3), [])
+
+    def test_intersection_respects_maximum_depth(self):
+        api = AtomSpaceAPI.create()
+        left, right = api.create_node("left"), api.create_node("right")
+        middle = api.create_node("middle")
+        api.create_ligature("LeftMiddle", left, middle)
+        api.create_ligature("RightMiddle", right, middle)
+
+        self.assertEqual(api.intersection([left, right], max_depth=1), [])
+        at_depth_two = api.intersection([left, right], max_depth=2)
+        self.assertEqual([item.atom_id for item in at_depth_two], [middle])
+        self.assertEqual(at_depth_two[0].depths, {left: 2, right: 2})
+
+    def test_intersection_does_not_escape_through_kind_edges(self):
+        api = AtomSpaceAPI.create()
+        shared_kind = api.kind("Shared")
+        left = api.create_node("left", kind=shared_kind)
+        right = api.create_node("right", kind=shared_kind)
+        unrelated = api.create_node("unrelated")
+        api.create_ligature("KindMetadata", shared_kind, unrelated)
+
+        self.assertEqual(api.intersection([left, right], max_depth=5), [])
 
     def test_renderer_hides_deleted_atoms_and_renders_relationship_types(self):
         api = AtomSpaceAPI.create()
