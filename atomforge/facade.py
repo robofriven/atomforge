@@ -25,7 +25,7 @@ class AtomSpaceAPI:
     Consumers should depend on this type rather than on Core storage.
     """
 
-    __slots__ = ("__space",)
+    __slots__ = ("__space", "__weakref__")
 
     def __init__(self, space: AtomSpace) -> None:
         if not isinstance(space, AtomSpace):
@@ -33,8 +33,8 @@ class AtomSpaceAPI:
         self.__space = space
 
     @classmethod
-    def create(cls, *, dedup_links: bool = True) -> "AtomSpaceAPI":
-        return cls(AtomSpace(dedup_links=dedup_links))
+    def create(cls, *, dedup_predicates: bool = True) -> "AtomSpaceAPI":
+        return cls(AtomSpace(dedup_predicates=dedup_predicates))
 
     @classmethod
     def load(cls, path: Union[str, Path]) -> "AtomSpaceAPI":
@@ -86,7 +86,7 @@ class AtomSpaceAPI:
         self,
         label: Optional[str],
         *,
-        kind: NameOrId = 0,
+        kind: NameOrId,
         props: Optional[Dict[str, Any]] = None,
         intern: bool = False,
         confidence: float = 1.0,
@@ -99,19 +99,22 @@ class AtomSpaceAPI:
             confidence=confidence,
         )
 
-    def create_link(
+    def create_predicate(
         self,
         predicate: NameOrId,
         *args: AtomId,
         label: Optional[str] = None,
         confidence: float = 1.0,
     ) -> AtomId:
-        return self.__space.create_link(
+        return self.__space.create_predicate(
             predicate,
             *args,
             label=label,
             confidence=confidence,
         )
+
+    # Compatibility alias for callers using the former Link terminology.
+    create_link = create_predicate
 
     def create_ligature(
         self, name: str, *args: AtomId, label: Optional[str] = None,
@@ -181,36 +184,54 @@ class AtomSpaceAPI:
     def find_by_label(self, label: str) -> List[AtomId]:
         return self.__space.find_by_label(label)
 
-    def links_of(self, predicate: NameOrId) -> Set[AtomId]:
-        return self.__space.links_of(predicate)
+    def predicates_of(self, predicate: NameOrId) -> Set[AtomId]:
+        return self.__space.predicates_of(predicate)
 
-    def find_links(self, predicate: NameOrId, *args: AtomId) -> List[SearchResult]:
-        return self.__space.find_links(predicate, *args)
+    def find_predicates(
+        self, predicate: NameOrId, *args: AtomId
+    ) -> List[SearchResult]:
+        return self.__space.find_predicates(predicate, *args)
 
-    def has_link(self, predicate: NameOrId, *args: AtomId) -> bool:
-        return self.__space.has_link(predicate, *args)
+    def has_predicate(self, predicate: NameOrId, *args: AtomId) -> bool:
+        return self.__space.has_predicate(predicate, *args)
 
-    def find_links_by_label(
+    def find_predicates_by_label(
         self, predicate: NameOrId, *labels: str
     ) -> List[SearchResult]:
-        return self.__space.find_links_by_label(predicate, *labels)
+        return self.__space.find_predicates_by_label(predicate, *labels)
 
-    def has_link_by_label(self, predicate: NameOrId, *labels: str) -> bool:
-        return self.__space.has_link_by_label(predicate, *labels)
+    def has_predicate_by_label(self, predicate: NameOrId, *labels: str) -> bool:
+        return self.__space.has_predicate_by_label(predicate, *labels)
+
+    links_of = predicates_of
+    find_links = find_predicates
+    has_link = has_predicate
+    find_links_by_label = find_predicates_by_label
+    has_link_by_label = has_predicate_by_label
 
     def in_ligatures(self, atom_id: AtomId) -> Set[AtomId]:
         return self.__space.in_ligatures(atom_id)
 
-    def in_links(
+    def in_predicates(
         self, atom_id: AtomId, *, predicate: Optional[NameOrId] = None
     ) -> Set[AtomId]:
-        return self.__space.in_links(atom_id, predicate=predicate)
+        return self.__space.in_predicates(atom_id, predicate=predicate)
 
-    def out(self, link_id: AtomId) -> Tuple[AtomId, ...]:
-        return self.__space.out(link_id)
+    in_links = in_predicates
+
+    def in_transitions(self, atom_id: AtomId) -> Set[AtomId]:
+        return self.__space.in_transitions(atom_id)
+
+    def predicate_args(self, predicate_id: AtomId) -> Tuple[AtomId, ...]:
+        return self.__space.predicate_args(predicate_id)
+
+    out = predicate_args
 
     def connected(self, ligature_id: AtomId) -> Tuple[AtomId, ...]:
         return self.__space.connected(ligature_id)
+
+    def transition_args(self, transition_id: AtomId) -> Tuple[AtomId, AtomId]:
+        return self.__space.transition_args(transition_id)
 
     def confidence(self, atom_id: AtomId) -> float:
         return self.__space.confidence(atom_id)
@@ -226,6 +247,18 @@ class AtomSpaceAPI:
 
     def remove_current(self, atom_id: AtomId) -> None:
         self.__space.remove_current(atom_id)
+
+    def transition(
+        self,
+        before: AtomId,
+        after: AtomId,
+        *,
+        label: Optional[str] = None,
+        confidence: float = 1.0,
+    ) -> AtomId:
+        return self.__space.transition(
+            before, after, label=label, confidence=confidence
+        )
 
     def pretty(self, atom_id: AtomId, *, max_depth: int = 2) -> str:
         return self.__space.pretty(atom_id, max_depth=max_depth)

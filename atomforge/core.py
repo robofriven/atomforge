@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple, Type, Union
 
 from .atoms import (
-    Atom, AtomId, KindAtom, Ligature, Link, Node, PredicateAtom,
+    Atom, AtomId, KindAtom, Ligature, Node, Predicate, PredicateAtom, Transition,
     Intersection, RawAtomResult, SearchResult, StructuralSearchResult,
     TraversalResult,
 )
@@ -21,7 +21,7 @@ from .infrastructure import (
 )
 
 NameOrId = Union[str, AtomId]
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 9
 
 
 def _utc_now_iso() -> str:
@@ -36,15 +36,15 @@ def _utc_now_iso() -> str:
 class AtomSpace:
     """Storage and graph mechanics for structurally immutable atoms."""
 
-    def __init__(self, *, dedup_links: bool = True) -> None:
+    def __init__(self, *, dedup_predicates: bool = True) -> None:
         self._next_id = 1
-        self._dedup_links = bool(dedup_links)
+        self._dedup_predicates = bool(dedup_predicates)
         self._atoms: Dict[AtomId, Atom] = {}
         self._confidence: Dict[AtomId, float] = {}
         self._deleted_ids: Set[AtomId] = set()
-        self._in_links: Dict[AtomId, Set[AtomId]] = {}
+        self._incoming_relationships: Dict[AtomId, Set[AtomId]] = {}
         self._by_pred: Dict[AtomId, Set[AtomId]] = {}
-        self._link_key_index: Dict[
+        self._predicate_key_index: Dict[
             Tuple[AtomId, Tuple[AtomId, ...]], Set[AtomId]
         ] = {}
         self._label_index: Dict[str, List[AtomId]] = {}
@@ -85,16 +85,16 @@ class AtomSpace:
     def _index_atom(self, atom: Atom) -> None:
         if atom.label:
             self._label_index.setdefault(atom.label, []).append(atom.id)
-        self._in_links.setdefault(atom.id, set())
+        self._incoming_relationships.setdefault(atom.id, set())
         if isinstance(atom, PredicateAtom):
             self._by_pred.setdefault(atom.id, set())
-        if isinstance(atom, Link):
+        if isinstance(atom, Predicate):
             self._by_pred.setdefault(atom.predicate, set()).add(atom.id)
-        if isinstance(atom, (Link, Ligature)):
+        if isinstance(atom, (Predicate, Transition, Ligature)):
             for target in atom.args:
-                self._in_links.setdefault(target, set()).add(atom.id)
-        if isinstance(atom, Link):
-            self._link_key_index.setdefault(
+                self._incoming_relationships.setdefault(target, set()).add(atom.id)
+        if isinstance(atom, Predicate):
+            self._predicate_key_index.setdefault(
                 (atom.predicate, atom.args), set()
             ).add(atom.id)
 
@@ -135,6 +135,10 @@ class AtomSpace:
     def kind(
         self, name: str, *, intern: bool = True, confidence: float = 1.0,
     ) -> AtomId:
+        if name == "Transition":
+            raise InvalidAtomOperationError(
+                "'Transition' is a reserved Core relationship name"
+            )
         if intern and name in self._kind_intern:
             atom_id = self._kind_intern[name]
             if self._is_deleted(atom_id):
@@ -154,7 +158,7 @@ class AtomSpace:
         acyclic: bool = False, intern: bool = True,
         template: Optional[str] = None, confidence: float = 1.0,
     ) -> AtomId:
-        if name in ("Current", "Delete"):
+        if name in ("Current", "Delete", "Transition"):
             raise InvalidAtomOperationError(
                 f"{name!r} is a reserved Core predicate name"
             )
@@ -245,16 +249,16 @@ class AtomSpace:
     def _is_current_assertion(self, atom_id: AtomId) -> bool:
         atom = self._atoms.get(atom_id)
         return (
-            isinstance(atom, Link)
+            isinstance(atom, Predicate)
             and atom.predicate == self.current_predicate
         )
 
     def create_node(
-        self, label: Optional[str], *, kind: NameOrId = 0,
+        self, label: Optional[str], *, kind: NameOrId,
         props: Optional[Dict[str, Any]] = None, intern: bool = False,
         confidence: float = 1.0,
     ) -> AtomId:
-        kind_id = self._resolve_kind(kind) if kind else 0
+        kind_id = self._resolve_kind(kind)
         requested_props = tuple(sorted((props or {}).items()))
         if intern:
             for atom_id in self.find_by_label(label):
@@ -269,14 +273,14 @@ class AtomSpace:
         atom_id = self._alloc()
         self._store_atom(
             Node(
-                atom_id, label, _utc_now_iso(), kind_id,
-                requested_props,
+                atom_id, label, _utc_now_iso(),
+                kind=kind_id, props=requested_props,
             ),
             confidence=confidence,
         )
         return atom_id
 
-    def _validate_link(
+    def _validate_predicate_application(
         self, predicate_id: AtomId, args: Tuple[AtomId, ...],
         *, allow_deleted: bool = False,
     ) -> PredicateAtom:
@@ -304,50 +308,59 @@ class AtomSpace:
                 raise ValueError(f"{predicate.label} would create a cycle")
         if not allow_deleted and predicate_id == self.delete_predicate:
             target = args[0]
-            if target in (self.current_predicate, self.delete_predicate):
-                raise InvalidAtomOperationError("Core predicates cannot be deleted")
+            if target in self._core_predicate_ids():
+                raise InvalidAtomOperationError(
+                    "Core vocabulary atoms cannot be deleted"
+                )
             target_atom = self._atoms[target]
-            if isinstance(target_atom, Link) and target_atom.predicate == self.delete_predicate:
+            if isinstance(target_atom, Predicate) and target_atom.predicate == self.delete_predicate:
                 raise InvalidAtomOperationError("Delete assertions cannot be deleted")
             if self._is_deleted(target):
                 raise AlreadyDeletedError(target)
         return predicate
 
-    def _create_link(
+    def _create_predicate_application(
         self, predicate: NameOrId, args: Iterable[AtomId], *,
         label: Optional[str] = None, confidence: float = 1.0,
         deduplicate: Optional[bool] = None, allow_core: bool = False,
     ) -> AtomId:
         predicate_id = self._resolve_predicate(predicate)
-        if not allow_core and predicate_id in (
-            self.current_predicate, self.delete_predicate
-        ):
+        if not allow_core and predicate_id in self._core_predicate_ids():
             raise InvalidAtomOperationError(
                 "Core predicates require their dedicated API operations"
             )
         arg_ids = tuple(int(value) for value in args)
-        self._validate_link(predicate_id, arg_ids)
-        dedup = self._dedup_links if deduplicate is None else deduplicate
-        existing_ids = self._link_key_index.get((predicate_id, arg_ids), set())
+        self._validate_predicate_application(predicate_id, arg_ids)
+        dedup = self._dedup_predicates if deduplicate is None else deduplicate
+        existing_ids = self._predicate_key_index.get((predicate_id, arg_ids), set())
         if any(self._is_deleted(existing_id) for existing_id in existing_ids):
             raise InvalidAtomOperationError(
-                "an exact historical Link was deleted and cannot be recreated"
+                "an exact historical Predicate was deleted and cannot be recreated"
             )
         if dedup and existing_ids:
             return min(existing_ids)
         atom_id = self._alloc()
         self._store_atom(
-            Link(atom_id, label, _utc_now_iso(), predicate_id, arg_ids),
+            Predicate(atom_id, label, _utc_now_iso(), predicate_id, arg_ids),
             confidence=confidence,
         )
         return atom_id
 
-    def create_link(
+    def create_predicate(
         self, predicate: NameOrId, *args: AtomId,
         label: Optional[str] = None, confidence: float = 1.0,
     ) -> AtomId:
-        return self._create_link(
+        """Create a stored Predicate application."""
+        return self._create_predicate_application(
             predicate, args, label=label, confidence=confidence
+        )
+
+    create_link = create_predicate
+
+    def _core_predicate_ids(self) -> Tuple[AtomId, ...]:
+        return (
+            self.current_predicate,
+            self.delete_predicate,
         )
 
     def create_ligature(
@@ -378,13 +391,13 @@ class AtomSpace:
             if not self._is_deleted(atom_id)
         ]
 
-    def links_of(self, predicate: NameOrId) -> Set[AtomId]:
+    def predicates_of(self, predicate: NameOrId) -> Set[AtomId]:
         return {
             result.matched_id
-            for result in self.search(predicate=predicate, atom_type=Link)
+            for result in self.search(predicate=predicate, atom_type=Predicate)
         }
 
-    def find_links(
+    def find_predicates(
         self, predicate: NameOrId, *args: AtomId
     ) -> List[SearchResult]:
         predicate_id = self._resolve_predicate(predicate)
@@ -393,14 +406,14 @@ class AtomSpace:
             self._validate_address(atom_id)
         return [
             result
-            for result in self.search(predicate=predicate_id, atom_type=Link)
-            if isinstance(result.atom, Link) and result.atom.args == wanted
+            for result in self.search(predicate=predicate_id, atom_type=Predicate)
+            if isinstance(result.atom, Predicate) and result.atom.args == wanted
         ]
 
-    def has_link(self, predicate: NameOrId, *args: AtomId) -> bool:
-        return bool(self.find_links(predicate, *args))
+    def has_predicate(self, predicate: NameOrId, *args: AtomId) -> bool:
+        return bool(self.find_predicates(predicate, *args))
 
-    def find_links_by_label(
+    def find_predicates_by_label(
         self, predicate: NameOrId, *labels: str
     ) -> List[SearchResult]:
         pools = [
@@ -411,8 +424,8 @@ class AtomSpace:
             return []
         return [
             result
-            for result in self.search(predicate=predicate, atom_type=Link)
-            if isinstance(result.atom, Link)
+            for result in self.search(predicate=predicate, atom_type=Predicate)
+            if isinstance(result.atom, Predicate)
             and len(result.atom.args) == len(pools)
             and all(
                 pool is None or arg in pool
@@ -420,13 +433,20 @@ class AtomSpace:
             )
         ]
 
-    def has_link_by_label(self, predicate: NameOrId, *labels: str) -> bool:
-        return bool(self.find_links_by_label(predicate, *labels))
+    def has_predicate_by_label(self, predicate: NameOrId, *labels: str) -> bool:
+        return bool(self.find_predicates_by_label(predicate, *labels))
+
+    # Compatibility aliases for the former generic Link terminology.
+    links_of = predicates_of
+    find_links = find_predicates
+    has_link = has_predicate
+    find_links_by_label = find_predicates_by_label
+    has_link_by_label = has_predicate_by_label
 
     def in_ligatures(self, atom_id: AtomId) -> Set[AtomId]:
         self._validate_address(atom_id)
         results = set()
-        for matched_id in self._in_links.get(atom_id, set()):
+        for matched_id in self._incoming_relationships.get(atom_id, set()):
             if not isinstance(self._atoms.get(matched_id), Ligature):
                 continue
             ligature = self.get(matched_id)
@@ -434,7 +454,7 @@ class AtomSpace:
                 results.add(matched_id)
         return results
 
-    def in_links(
+    def in_predicates(
         self, atom_id: AtomId, *, predicate: Optional[NameOrId] = None
     ) -> Set[AtomId]:
         self._validate_address(atom_id)
@@ -442,27 +462,47 @@ class AtomSpace:
             self._resolve_predicate(predicate) if predicate is not None else None
         )
         results = set()
-        for matched_id in self._in_links.get(atom_id, set()):
-            if not isinstance(self._atoms.get(matched_id), Link):
+        for matched_id in self._incoming_relationships.get(atom_id, set()):
+            if not isinstance(self._atoms.get(matched_id), Predicate):
                 continue
             link = self.get(matched_id)
-            if not isinstance(link, Link) or atom_id not in link.args:
+            if not isinstance(link, Predicate) or atom_id not in link.args:
                 continue
             if predicate_id is None or link.predicate == predicate_id:
                 results.add(matched_id)
         return results
 
-    def out(self, link_id: AtomId) -> Tuple[AtomId, ...]:
-        atom = self.get(link_id)
-        if not isinstance(atom, Link):
-            raise InvalidAtomOperationError(f"{link_id} is not a Link")
+    in_links = in_predicates
+
+    def in_transitions(self, atom_id: AtomId) -> Set[AtomId]:
+        self._validate_address(atom_id)
+        return {
+            transition_id
+            for transition_id in self._incoming_relationships.get(atom_id, set())
+            if isinstance(self.get(transition_id), Transition)
+        }
+
+    def predicate_args(self, predicate_id: AtomId) -> Tuple[AtomId, ...]:
+        atom = self.get(predicate_id)
+        if not isinstance(atom, Predicate):
+            raise InvalidAtomOperationError(f"{predicate_id} is not a Predicate")
         return tuple(arg for arg in atom.args if not self._is_deleted(arg))
+
+    out = predicate_args
 
     def connected(self, ligature_id: AtomId) -> Tuple[AtomId, ...]:
         atom = self.get(ligature_id)
         if not isinstance(atom, Ligature):
             raise InvalidAtomOperationError(f"{ligature_id} is not a Ligature")
         return tuple(arg for arg in atom.args if not self._is_deleted(arg))
+
+    def transition_args(self, transition_id: AtomId) -> Tuple[AtomId, AtomId]:
+        atom = self.get(transition_id)
+        if not isinstance(atom, Transition):
+            raise InvalidAtomOperationError(
+                f"{transition_id} is not a Transition"
+            )
+        return atom.args
 
     def _reachable_via_predicate(
         self, start: AtomId, goal: AtomId, predicate_id: AtomId, *,
@@ -478,7 +518,7 @@ class AtomSpace:
             seen.add(current)
             for link_id in self._by_pred.get(predicate_id, set()):
                 link = self._atoms.get(link_id) if raw else self.get(link_id)
-                if not isinstance(link, Link) or len(link.args) != 2:
+                if not isinstance(link, Predicate) or len(link.args) != 2:
                     continue
                 if link.args[0] == current and (
                     raw or not self._is_deleted(link.args[1])
@@ -489,30 +529,29 @@ class AtomSpace:
     def delete(self, atom_id: AtomId) -> AtomId:
         self._validate_address(atom_id)
         atom = self._atoms[atom_id]
-        if isinstance(atom, Link) and atom.predicate == self.current_predicate:
+        if isinstance(atom, Predicate) and atom.predicate == self.current_predicate:
             raise InvalidAtomOperationError(
                 "Current assertions must be removed with remove_current()"
             )
-        if isinstance(atom, Link) and atom.predicate == self.delete_predicate:
+        if isinstance(atom, Predicate) and atom.predicate == self.delete_predicate:
             raise InvalidAtomOperationError("Delete assertions cannot be deleted")
+        if atom_id in self._core_predicate_ids():
+            raise InvalidAtomOperationError("Core vocabulary atoms cannot be deleted")
         if isinstance(atom, KindAtom) and any(
             isinstance(candidate, Node)
             and candidate.kind == atom_id
-            and not self._is_deleted(candidate.id)
             for candidate in self._atoms.values()
         ):
             raise InvalidAtomOperationError(
-                "a KindAtom referenced by a live Node cannot be deleted"
+                "a KindAtom referenced by a stored Node cannot be deleted"
             )
         if isinstance(atom, PredicateAtom):
-            if atom_id in (self.current_predicate, self.delete_predicate):
-                raise InvalidAtomOperationError("Core predicates cannot be deleted")
             if any(
                 not self._is_deleted(link_id)
                 for link_id in self._by_pred.get(atom_id, set())
             ):
                 raise InvalidAtomOperationError(
-                    "a PredicateAtom used by a live Link cannot be deleted"
+                    "a PredicateAtom used by a live Predicate cannot be deleted"
                 )
 
         scheduled: Set[AtomId] = {atom_id}
@@ -520,14 +559,14 @@ class AtomSpace:
         current_assertions: Set[AtomId] = set()
         while pending:
             target = pending.pop()
-            for relationship_id in self._in_links.get(target, set()):
+            for relationship_id in self._incoming_relationships.get(target, set()):
                 if self._is_deleted(relationship_id):
                     continue
                 relationship = self._atoms[relationship_id]
-                if not isinstance(relationship, (Link, Ligature)):
+                if not isinstance(relationship, (Predicate, Transition, Ligature)):
                     continue
                 if (
-                    isinstance(relationship, Link)
+                    isinstance(relationship, Predicate)
                     and relationship.predicate == self.delete_predicate
                 ):
                     continue
@@ -542,7 +581,7 @@ class AtomSpace:
             self._remove_atom_physical(assertion_id)
         deletion_assertions = {}
         for target in sorted(scheduled):
-            assertion_id = self._create_link(
+            assertion_id = self._create_predicate_application(
                 self.delete_predicate, (target,), deduplicate=False,
                 allow_core=True,
             )
@@ -552,27 +591,27 @@ class AtomSpace:
 
     def _remove_atom_physical(self, atom_id: AtomId) -> None:
         atom = self._require_physical(atom_id)
-        if not isinstance(atom, Link) or atom.predicate != self.current_predicate:
+        if not isinstance(atom, Predicate) or atom.predicate != self.current_predicate:
             raise InvalidAtomOperationError(
                 "only Current assertions may be physically removed"
             )
         if any(
             not self._is_deleted(relationship_id)
-            for relationship_id in self._in_links.get(atom_id, set())
+            for relationship_id in self._incoming_relationships.get(atom_id, set())
         ):
             raise GraphInvariantError(
                 "a Current assertion is illegally used by a live relationship"
             )
         self._by_pred[atom.predicate].discard(atom_id)
         for target in atom.args:
-            self._in_links.get(target, set()).discard(atom_id)
-        self._in_links.pop(atom_id, None)
+            self._incoming_relationships.get(target, set()).discard(atom_id)
+        self._incoming_relationships.pop(atom_id, None)
         key = (atom.predicate, atom.args)
-        indexed = self._link_key_index.get(key)
+        indexed = self._predicate_key_index.get(key)
         if indexed is not None:
             indexed.discard(atom_id)
             if not indexed:
-                self._link_key_index.pop(key)
+                self._predicate_key_index.pop(key)
         if atom.label:
             self._label_index[atom.label].remove(atom_id)
             if not self._label_index[atom.label]:
@@ -585,7 +624,7 @@ class AtomSpace:
         matches = []
         for link_id in self._by_pred.get(self.current_predicate, set()):
             link = self.get(link_id)
-            if isinstance(link, Link) and link.args == (atom_id,):
+            if isinstance(link, Predicate) and link.args == (atom_id,):
                 matches.append(link_id)
         return matches
 
@@ -597,7 +636,7 @@ class AtomSpace:
             )
         if self._current_matches(atom_id):
             raise DuplicateCurrentError(atom_id)
-        return self._create_link(
+        return self._create_predicate_application(
             self.current_predicate, (atom_id,), deduplicate=False,
             allow_core=True,
         )
@@ -614,6 +653,47 @@ class AtomSpace:
             )
         self._remove_atom_physical(matches[0])
 
+    def transition(
+        self,
+        before: AtomId,
+        after: AtomId,
+        *,
+        label: Optional[str] = None,
+        confidence: float = 1.0,
+    ) -> AtomId:
+        """Create a Transition relationship from ``before`` to ``after``.
+
+        If ``before`` is Current, its Current assertion moves to ``after``.
+        Historical transitions leave Current state unchanged.
+        """
+        self._validate_address(before)
+        self._validate_address(after)
+        if self._is_current_assertion(before) or self._is_current_assertion(after):
+            raise InvalidAtomOperationError(
+                "Current assertions cannot be Transition states"
+            )
+        # Validate creation metadata before writing any part of the structure.
+        self._validated_confidence(confidence, creation=True)
+        before_was_current = bool(self._current_matches(before))
+        after_was_current = bool(self._current_matches(after))
+
+        transition_id = self._alloc()
+        self._store_atom(
+            Transition(
+                transition_id,
+                label,
+                _utc_now_iso(),
+                (before, after),
+            ),
+            confidence=confidence,
+        )
+
+        if before_was_current:
+            self.remove_current(before)
+            if before == after or not after_was_current:
+                self.make_current(after)
+        return transition_id
+
     @staticmethod
     def _matches(
         atom: Atom, *, label: Optional[str],
@@ -623,7 +703,7 @@ class AtomSpace:
         return (
             (label is None or atom.label == label)
             and (atom_type is None or isinstance(atom, atom_type))
-            and (predicate_id is None or isinstance(atom, Link) and atom.predicate == predicate_id)
+            and (predicate_id is None or isinstance(atom, Predicate) and atom.predicate == predicate_id)
             and (kind_id is None or isinstance(atom, Node) and atom.kind == kind_id)
         )
 
@@ -679,14 +759,14 @@ class AtomSpace:
             if max_depth is not None and depth >= max_depth:
                 continue
             atom = self._atoms[atom_id]
-            if isinstance(atom, Link):
+            if isinstance(atom, Predicate):
                 queue.append((atom.predicate, depth + 1))
                 queue.extend((arg, depth + 1) for arg in atom.args)
-            if isinstance(atom, Ligature):
+            if isinstance(atom, (Transition, Ligature)):
                 queue.extend((arg, depth + 1) for arg in atom.args)
             queue.extend(
                 (relationship_id, depth + 1)
-                for relationship_id in self._in_links.get(atom_id, set())
+                for relationship_id in self._incoming_relationships.get(atom_id, set())
             )
         return results
 
@@ -704,14 +784,14 @@ class AtomSpace:
             results.append(TraversalResult(atom, atom_id, depth))
             if max_depth is not None and depth >= max_depth:
                 continue
-            if isinstance(atom, Link):
+            if isinstance(atom, Predicate):
                 queue.append((atom.predicate, depth + 1))
                 queue.extend((arg, depth + 1) for arg in atom.args)
-            if isinstance(atom, Ligature):
+            if isinstance(atom, (Transition, Ligature)):
                 queue.extend((arg, depth + 1) for arg in atom.args)
             queue.extend(
                 (relationship_id, depth + 1)
-                for relationship_id in self._in_links.get(atom_id, set())
+                for relationship_id in self._incoming_relationships.get(atom_id, set())
             )
         return results
 
@@ -772,12 +852,16 @@ class AtomSpace:
             atom = self.get(target)
             if atom is None:
                 return "<deleted>"
-            if isinstance(atom, Link):
+            if isinstance(atom, Predicate):
                 predicate = self.get(atom.predicate)
                 name = getattr(predicate, "label", None) or f"Pred#{atom.predicate}"
                 if depth <= 0:
                     return f"{name}(...)"
                 return f"{name}({', '.join(render(arg, depth - 1) for arg in atom.args)})"
+            if isinstance(atom, Transition):
+                if depth <= 0:
+                    return "Transition(...)"
+                return f"Transition({', '.join(render(arg, depth - 1) for arg in atom.args)})"
             if isinstance(atom, Ligature):
                 if depth <= 0:
                     return f"{atom.name}(...)"
@@ -798,7 +882,7 @@ class AtomSpace:
         data = {
             "schema_version": SCHEMA_VERSION,
             "next_id": self._next_id,
-            "dedup_links": self._dedup_links,
+            "dedup_predicates": self._dedup_predicates,
             "atoms": [self._encoded_atom(atom) for atom in self._atoms.values()],
             "confidence": {str(key): value for key, value in self._confidence.items()},
             "kind_intern": self._kind_intern,
@@ -825,11 +909,11 @@ class AtomSpace:
         try:
             space = cls.__new__(cls)
             space._next_id = int(data["next_id"])
-            space._dedup_links = bool(data["dedup_links"])
+            space._dedup_predicates = bool(data["dedup_predicates"])
             space._atoms, space._confidence = {}, {}
             space._deleted_ids = set()
-            space._in_links, space._by_pred = {}, {}
-            space._link_key_index, space._label_index = {}, {}
+            space._incoming_relationships, space._by_pred = {}, {}
+            space._predicate_key_index, space._label_index = {}, {}
             space._kind_intern = {
                 str(key): int(value) for key, value in data["kind_intern"].items()
             }
@@ -838,9 +922,9 @@ class AtomSpace:
             }
             space._validators = []
             constructors = {
-                "Atom": Atom, "Node": Node, "Link": Link,
+                "Node": Node, "Predicate": Predicate,
                 "Ligature": Ligature, "KindAtom": KindAtom,
-                "PredicateAtom": PredicateAtom,
+                "PredicateAtom": PredicateAtom, "Transition": Transition,
             }
             for stored in data["atoms"]:
                 item = dict(stored)
@@ -867,7 +951,7 @@ class AtomSpace:
             space.delete_predicate = int(data["delete_predicate"])
             for assertion_id in space._by_pred.get(space.delete_predicate, set()):
                 assertion = space._atoms[assertion_id]
-                if not isinstance(assertion, Link) or len(assertion.args) != 1:
+                if not isinstance(assertion, Predicate) or len(assertion.args) != 1:
                     raise GraphInvariantError("malformed Delete assertion")
                 space._deleted_ids.add(assertion.args[0])
             space._validate_loaded()
@@ -883,21 +967,32 @@ class AtomSpace:
         if self._next_id <= max(self._atoms, default=0):
             raise GraphInvariantError("next_id is not above allocated ids")
         for atom in self._atoms.values():
-            if isinstance(atom, Node) and atom.kind and not isinstance(
+            if isinstance(atom, Node) and not isinstance(
                 self._atoms.get(atom.kind), KindAtom
             ):
                 raise GraphInvariantError(f"invalid kind on {atom.id}")
             if (
                 isinstance(atom, Node)
-                and atom.kind
-                and not self._is_deleted(atom.id)
                 and self._is_deleted(atom.kind)
             ):
                 raise GraphInvariantError(
-                    f"live Node {atom.id} uses deleted KindAtom {atom.kind}"
+                    f"Node {atom.id} uses deleted KindAtom {atom.kind}"
                 )
-            if isinstance(atom, Link):
-                self._validate_link(atom.predicate, atom.args, allow_deleted=True)
+            if isinstance(atom, Predicate):
+                self._validate_predicate_application(
+                    atom.predicate, atom.args, allow_deleted=True
+                )
+            if isinstance(atom, Transition):
+                if len(atom.args) != 2:
+                    raise GraphInvariantError(
+                        f"Transition {atom.id} must have exactly two arguments"
+                    )
+                for target in atom.args:
+                    self._require_physical(target)
+                    if self._is_current_assertion(target):
+                        raise GraphInvariantError(
+                            "Current assertions cannot be Transition arguments"
+                        )
             if isinstance(atom, Ligature):
                 if not isinstance(atom.name, str) or not atom.name.strip():
                     raise GraphInvariantError(f"invalid Ligature name on {atom.id}")
@@ -941,22 +1036,26 @@ class AtomSpace:
         for atom in self._atoms.values():
             if (
                 isinstance(atom, PredicateAtom)
-                and atom.label in ("Current", "Delete")
-                and atom.id not in (self.current_predicate, self.delete_predicate)
+                and atom.label in ("Current", "Delete", "Transition")
+                and atom.id not in self._core_predicate_ids()
             ):
                 raise GraphInvariantError(
                     f"reserved predicate name {atom.label!r} has invalid identity"
                 )
+            if isinstance(atom, KindAtom) and atom.label == "Transition":
+                raise GraphInvariantError(
+                    "Transition cannot be represented as a KindAtom"
+                )
         deleted_targets = set()
         for assertion_id in self._by_pred.get(self.delete_predicate, set()):
             assertion = self._atoms[assertion_id]
-            assert isinstance(assertion, Link)
+            assert isinstance(assertion, Predicate)
             target = assertion.args[0]
-            if target in (self.current_predicate, self.delete_predicate):
-                raise GraphInvariantError("Core predicates cannot be deleted")
+            if target in self._core_predicate_ids():
+                raise GraphInvariantError("Core vocabulary atoms cannot be deleted")
             target_atom = self._atoms[target]
             if (
-                isinstance(target_atom, Link)
+                isinstance(target_atom, Predicate)
                 and target_atom.predicate == self.delete_predicate
             ):
                 raise GraphInvariantError("Delete assertions cannot be deleted")
@@ -966,15 +1065,17 @@ class AtomSpace:
         if deleted_targets != self._deleted_ids:
             raise GraphInvariantError("derived deletion state is inconsistent")
         for target in deleted_targets:
-            for incident_id in self._in_links.get(target, set()):
+            for incident_id in self._incoming_relationships.get(target, set()):
                 incident = self._atoms[incident_id]
                 if (
-                    isinstance(incident, Link)
+                    isinstance(incident, Predicate)
                     and incident.predicate == self.delete_predicate
                     and incident.args == (target,)
                 ):
                     continue
-                if isinstance(incident, (Link, Ligature)) and not self._is_deleted(incident_id):
+                if isinstance(
+                    incident, (Predicate, Transition, Ligature)
+                ) and not self._is_deleted(incident_id):
                     raise GraphInvariantError(
                         f"live relationship {incident_id} is incident to deleted atom {target}"
                     )
@@ -982,14 +1083,14 @@ class AtomSpace:
                 for link_id in self._by_pred.get(target, set()):
                     if not self._is_deleted(link_id):
                         raise GraphInvariantError(
-                            f"live Link {link_id} uses deleted predicate {target}"
+                            f"live Predicate {link_id} uses deleted predicate {target}"
                         )
         current_targets = set()
         for assertion_id in self._by_pred.get(self.current_predicate, set()):
             if self._is_deleted(assertion_id):
                 raise GraphInvariantError("Current assertions cannot be tombstoned")
             assertion = self._atoms[assertion_id]
-            assert isinstance(assertion, Link)
+            assert isinstance(assertion, Predicate)
             target = assertion.args[0]
             if self._is_deleted(target):
                 raise GraphInvariantError("Current cannot target a deleted atom")

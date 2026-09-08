@@ -1,8 +1,9 @@
 """Immutable data shapes for AtomForge's single AtomId space.
 
-Node is a thing. Link is a predicate-backed, globally indexed relationship.
-Ligature is a named semantic relationship discovered through topology.
-KindAtom defines Node categories, and PredicateAtom defines Link forms.
+Node is a thing. Predicate is a predicate-backed, globally indexed relationship.
+Transition is a Core-owned binary state-change relationship. Ligature is a
+named semantic relationship discovered through topology.
+KindAtom defines Node categories, and PredicateAtom defines Predicate forms.
 Enforcement, storage, and indexing belong to Core.
 """
 
@@ -33,7 +34,7 @@ class KindAtom(Atom):
 
 @dataclass(frozen=True, slots=True)
 class PredicateAtom(Atom):
-    """The structural form of predicate-backed ``Link`` relationships.
+    """The structural form of stored ``Predicate`` applications.
 
     arity:
       - >= 0 means fixed-arity
@@ -52,7 +53,7 @@ class PredicateAtom(Atom):
 
     # Structural constraints (safe to keep here; enforcement belongs in AtomSpace)
     anti_reflexive: bool = False  # disallow repeated args (when enforced)
-    acyclic: bool = False  # disallow cycles for binary Links (when enforced)
+    acyclic: bool = False  # disallow cycles for binary Predicates (when enforced)
 
     def check_arity(self, n_args: int) -> None:
         if self.arity != -1 and n_args != self.arity:
@@ -79,17 +80,17 @@ class PredicateAtom(Atom):
         return None
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class Node(Atom):
-    """A thing with an optional ``KindAtom`` reference and immutable properties."""
+    """A thing with a required ``KindAtom`` reference and immutable properties."""
 
-    kind: AtomId = 0
+    kind: AtomId
     props: Tuple[Tuple[str, Any], ...] = field(default_factory=tuple)
 
 
 @dataclass(frozen=True, slots=True)
-class Link(Atom):
-    """A globally predicate-indexed relationship between arbitrary atoms."""
+class Predicate(Atom):
+    """An application of a PredicateAtom to ordered AtomId arguments."""
 
     predicate: AtomId = 0
     args: Tuple[AtomId, ...] = field(default_factory=tuple)
@@ -97,6 +98,30 @@ class Link(Atom):
     @property
     def arity(self) -> int:
         return len(self.args)
+
+
+# Transitional source-compatibility name. Stored type information and public
+# terminology use Predicate.
+Link = Predicate
+
+
+@dataclass(frozen=True, slots=True)
+class Transition(Atom):
+    """A Core-owned state change directly connecting ``before`` to ``after``."""
+
+    args: Tuple[AtomId, AtomId] = (0, 0)
+
+    @property
+    def arity(self) -> int:
+        return len(self.args)
+
+    @property
+    def before(self) -> AtomId:
+        return self.args[0]
+
+    @property
+    def after(self) -> AtomId:
+        return self.args[1]
 
 
 @dataclass(frozen=True, slots=True)

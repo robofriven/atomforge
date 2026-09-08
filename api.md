@@ -6,23 +6,25 @@ storage dictionaries and indexes are not public API.
 ## Model
 
 Every stored object has a permanent positive integer `AtomId`. IDs are never
-redirected or reused. The stored primitives are `Node`, `Link`, `Ligature`,
-`KindAtom`, and `PredicateAtom`.
+redirected or reused. The stored primitives are `Node`, `Predicate`, `Ligature`,
+`KindAtom`, `PredicateAtom`, and `Transition`.
 
 Atoms are structurally immutable. Create a new atom to represent a changed
 thing or relationship. Confidence is separate mutable metadata and may be
 updated without changing graph structure.
 
-Core creates two unary predicates:
+Core creates two unary predicates and owns the binary `Transition(A, B)` atom
+form:
 
 - `Current(X)` marks an atom as currently active or relevant. It is managed only
   through `make_current` and `remove_current`.
 - `Delete(X)` permanently makes `X` logically absent while retaining its
-  physical atom and tombstones all live Links and Ligatures incident to `X`.
+  physical atom and tombstones all live Predicates, Transitions, and Ligatures
+  incident to `X`.
+- `Transition(A, B)` directly records a change from state atom `A` to state
+  atom `B`.
 
-`Current` and `Delete` are reserved Core predicate names. Calls to `predicate`
-with either name raise `InvalidAtomOperationError`, regardless of structure or
-interning options.
+`Current`, `Delete`, and `Transition` are reserved Core relationship names.
 
 Normal APIs hide atoms targeted by `Delete`; logical traversal stops at every
 deleted atom or relationship. Raw APIs traverse and expose purely physical
@@ -33,12 +35,12 @@ history and report deletion status. Core has no phantom or ephemeral primitive.
 ### `AtomSpaceAPI.create`
 
 ```python
-AtomSpaceAPI.create(*, dedup_links: bool = True) -> AtomSpaceAPI
+AtomSpaceAPI.create(*, dedup_predicates: bool = True) -> AtomSpaceAPI
 ```
 
-Creates a graph containing only the Core-owned `Current` and `Delete`
-PredicateAtoms. With link deduplication enabled, creating the same live
-`(predicate, args)` Link returns its existing ID.
+Creates a graph containing the Core-owned Current and Delete PredicateAtoms.
+With predicate deduplication enabled, creating the same live
+`(predicate, args)` Predicate returns its existing ID.
 
 ```python
 from atomforge import AtomSpaceAPI
@@ -70,7 +72,7 @@ api.save(path: str | pathlib.Path) -> None
 ```
 
 Persists atoms, confidence, canonical vocabulary maps, allocation state, Core
-predicate IDs, and link-deduplication configuration. Derived indexes and the
+predicate IDs, and predicate-deduplication configuration. Derived indexes and the
 deletion-ID set are rebuilt on load and are not persisted.
 
 ```python
@@ -107,7 +109,8 @@ api.kind(
 ```
 
 Creates a KindAtom. With `intern=True`, the canonical live KindAtom for `name`
-is returned if it already exists.
+is returned if it already exists. `Transition` is reserved for Core's
+relationship form and cannot be used as a Kind name.
 
 ```python
 person = api.kind("Person")
@@ -129,12 +132,13 @@ api.predicate(
 ) -> AtomId
 ```
 
-Creates a PredicateAtom defining a globally indexed Link form. `arity=-1` is
+Creates a PredicateAtom defining a globally indexed Predicate form. `arity=-1` is
 variadic. Roles are descriptive. Anti-reflexive predicates reject repeated
 arguments; acyclic binary predicates reject cycles. Renderer may use `template`.
 For an interned name, every immutable structure field must match the existing
 PredicateAtom or creation raises `GraphInvariantError`.
-The names `Current` and `Delete` are unavailable to domain predicates.
+The names `Current`, `Delete`, and `Transition` are unavailable to domain
+predicates.
 
 ```python
 contains = api.predicate(
@@ -150,14 +154,14 @@ contains = api.predicate(
 api.create_node(
     label: str | None,
     *,
-    kind: str | AtomId = 0,
+    kind: str | AtomId,
     props: dict[str, Any] | None = None,
     intern: bool = False,
     confidence: float = 1.0,
 ) -> AtomId
 ```
 
-Creates a Node. A nonzero kind must identify a live KindAtom. Node properties
+Creates a Node. `kind` is required and must identify a live KindAtom. Node properties
 are immutable application data. `intern=True` returns an existing live Node
 with the same label only when both kind and properties exactly match; a conflict
 raises `GraphInvariantError`. Labels are otherwise not identity.
@@ -166,10 +170,10 @@ raises `GraphInvariantError`. Labels are otherwise not identity.
 john = api.create_node("John", kind=person, props={"source": "import"})
 ```
 
-### `create_link`
+### `create_predicate`
 
 ```python
-api.create_link(
+api.create_predicate(
     predicate: str | AtomId,
     *args: AtomId,
     label: str | None = None,
@@ -177,16 +181,19 @@ api.create_link(
 ) -> AtomId
 ```
 
-Creates a predicate-backed Link and applies its structural contract. The
+Creates a Predicate application and applies its structural contract. The
 predicate and every argument must be live. Arguments may reference any stored
-atom primitive. The Core-owned Current and Delete predicates are rejected here;
-use their dedicated operations. An exact Link identity that has ever been
+atom primitive. All Core-owned predicates are rejected here;
+use their dedicated operations. An exact Predicate identity that has ever been
 deleted cannot be recreated. A live Current assertion cannot be an argument.
 
 ```python
-group = api.create_node("group")
-membership = api.create_link(contains, group, john)
+group_kind = api.kind("Group")
+group = api.create_node("group", kind=group_kind)
+membership = api.create_predicate(contains, group, john)
 ```
+
+`create_link` is retained as a temporary compatibility alias.
 
 ### `create_ligature`
 
@@ -205,7 +212,8 @@ nonempty name belongs to the relationship atom itself, and it must connect at
 least one live atom. A live Current assertion cannot be a connection.
 
 ```python
-left = api.create_node("left")
+body_side = api.kind("BodySide")
+left = api.create_node("left", kind=body_side)
 arm = api.create_ligature("Arm", john, left)
 ```
 
@@ -264,11 +272,12 @@ Filters physical atoms and omits deleted matches. Each result contains the live
 `atom` and its permanent `matched_id`.
 
 ```python
-from atomforge import Ligature, Link, Node
+from atomforge import Ligature, Node, Predicate, Transition
 
 people = api.search(atom_type=Node, kind=person)
-links = api.search(atom_type=Link, predicate=contains)
+predicates = api.search(atom_type=Predicate, predicate=contains)
 ligatures = api.search(atom_type=Ligature)
+transitions = api.search(atom_type=Transition)
 ```
 
 ### `search_raw`
@@ -285,55 +294,55 @@ api.search_raw(
 
 Applies the same physical filters without hiding deleted atoms.
 
-### `links_of`
+### `predicates_of`
 
 ```python
-api.links_of(predicate: str | AtomId) -> set[AtomId]
+api.predicates_of(predicate: str | AtomId) -> set[AtomId]
 ```
 
-Returns live Link IDs indexed under the predicate.
+Returns live Predicate IDs indexed under the PredicateAtom.
 
-### `find_links`
+### `find_predicates`
 
 ```python
-api.find_links(predicate: str | AtomId, *args: AtomId) -> list[SearchResult]
+api.find_predicates(predicate: str | AtomId, *args: AtomId) -> list[SearchResult]
 ```
 
-Returns live Links exactly matching the predicate and complete argument tuple.
+Returns live Predicates exactly matching the definition and argument tuple.
 
-### `has_link`
+### `has_predicate`
 
 ```python
-api.has_link(predicate: str | AtomId, *args: AtomId) -> bool
+api.has_predicate(predicate: str | AtomId, *args: AtomId) -> bool
 ```
 
-Returns whether `find_links()` has a match.
+Returns whether `find_predicates()` has a match.
 
-### `find_links_by_label`
+### `find_predicates_by_label`
 
 ```python
-api.find_links_by_label(
+api.find_predicates_by_label(
     predicate: str | AtomId,
     *labels: str,
 ) -> list[SearchResult]
 ```
 
-Matches Link arguments by exact live labels. `"*"` is a wildcard position.
+Matches Predicate arguments by exact live labels. `"*"` is a wildcard position.
 
-### `has_link_by_label`
+### `has_predicate_by_label`
 
 ```python
-api.has_link_by_label(predicate: str | AtomId, *labels: str) -> bool
+api.has_predicate_by_label(predicate: str | AtomId, *labels: str) -> bool
 ```
 
-Returns whether `find_links_by_label()` has a match.
+Returns whether `find_predicates_by_label()` has a match.
 
 ## Local topology
 
-### `in_links`
+### `in_predicates`
 
 ```python
-api.in_links(
+api.in_predicates(
     atom_id: AtomId,
     *,
     predicate: str | AtomId | None = None,
@@ -341,7 +350,7 @@ api.in_links(
 ```
 
 Reads only the atom's local incoming-reference bucket and returns live incident
-Links. The optional predicate is resolved once and filters those candidates.
+Predicates. The optional definition is resolved once and filters those candidates.
 
 ### `in_ligatures`
 
@@ -352,13 +361,21 @@ api.in_ligatures(atom_id: AtomId) -> set[AtomId]
 Reads only the atom's local incoming-reference bucket and returns live incident
 Ligatures. It does not scan atoms, Ligatures, or relation names.
 
-### `out`
+### `in_transitions`
 
 ```python
-api.out(link_id: AtomId) -> tuple[AtomId, ...]
+api.in_transitions(atom_id: AtomId) -> set[AtomId]
 ```
 
-Returns a live Link's argument IDs, omitting arguments targeted by Delete.
+Returns the live Transition atoms for which `atom_id` is either endpoint.
+
+### `predicate_args`
+
+```python
+api.predicate_args(predicate_id: AtomId) -> tuple[AtomId, ...]
+```
+
+Returns a live Predicate's argument IDs, omitting arguments targeted by Delete.
 
 ### `connected`
 
@@ -367,6 +384,14 @@ api.connected(ligature_id: AtomId) -> tuple[AtomId, ...]
 ```
 
 Returns a live Ligature's connected IDs, omitting atoms targeted by Delete.
+
+### `transition_args`
+
+```python
+api.transition_args(transition_id: AtomId) -> tuple[AtomId, AtomId]
+```
+
+Returns the direct `(before, after)` argument pair of a live Transition.
 
 ## Traversal
 
@@ -380,9 +405,9 @@ api.traverse(
 ) -> list[TraversalResult]
 ```
 
-Traverses logical topology breadth-first. It follows Link predicates and
-arguments, Ligature connections, and incoming relationships, but does not
-follow `Node.kind` definition edges. This Kind boundary prevents a search from
+Traverses logical topology breadth-first. It follows Predicate definitions and
+arguments, Transition endpoints, Ligature connections, and incoming
+relationships, but does not follow `Node.kind` definition edges. This Kind boundary prevents a search from
 escaping through a shared definition into unrelated graph structure. Traversal
 hard-stops at deleted atoms and relationships and never crosses through them.
 Each result contains `atom`, permanent `matched_id`, and `depth`, where the
@@ -457,17 +482,43 @@ delete an atom.
 
 ## Current and deletion
 
+### `transition`
+
+```python
+api.transition(
+    before: AtomId,
+    after: AtomId,
+    *,
+    label: str | None = None,
+    confidence: float = 1.0,
+) -> AtomId
+```
+
+Creates and returns one binary `Transition` relationship atom whose arguments
+are exactly `(before, after)`. It is neither a Node nor a Predicate application;
+there is no intermediate structural atom.
+
+If `Current(before)` exists, Core removes it and ensures `Current(after)`
+exists. If `before` is not Current, no Current assertions are changed. Labels
+remain optional human-readable metadata.
+
+```python
+api.make_current(before)
+change = api.transition(before, after)
+assert api.has_predicate(api.current_predicate, after)
+```
+
 ### `make_current`
 
 ```python
 api.make_current(atom_id: AtomId) -> AtomId
 ```
 
-Creates and returns a `Current(atom_id)` Link. A duplicate live Current
+Creates and returns a `Current(atom_id)` Predicate. A duplicate live Current
 assertion raises `DuplicateCurrentError`. Different atoms may be Current at the
-same time. Generic `create_link` rejects the Core-owned Current predicate. A
-Current assertion cannot itself be made Current or used by another Link or
-Ligature.
+same time. Generic `create_predicate` rejects the Core-owned Current definition. A
+Current assertion cannot itself be made Current or used by another Predicate,
+Transition, or Ligature.
 
 ### `remove_current`
 
@@ -486,17 +537,17 @@ it performs no deletion cascade.
 api.delete(atom_id: AtomId) -> AtomId
 ```
 
-Creates and returns an immutable `Delete(atom_id)` Link. Normal access then
-hides the target and every live Link or Ligature incident to it; raw access
+Creates and returns an immutable `Delete(atom_id)` Predicate. Normal access then
+hides the target and every live Predicate, Transition, or Ligature incident to it; raw access
 retains their physical history. The tombstone is permanent, and attempting to
-recreate an exact deleted Link raises `InvalidAtomOperationError`. Repeated
-deletion raises `AlreadyDeletedError`. Core's Current/Delete PredicateAtoms,
-Delete assertion Links, and Current assertions cannot be deleted. Generic
-`create_link` rejects both Core predicates.
+recreate an exact deleted Predicate raises `InvalidAtomOperationError`. Repeated
+deletion raises `AlreadyDeletedError`. Core vocabulary atoms, Delete assertion
+Predicates and Current assertions cannot be deleted. Generic `create_predicate` rejects
+all Core-owned predicate names; Transitions are created with `transition()`.
 
 Deletion closure is cycle-safe: revisiting an already scheduled relationship
-does not fail. Deleting a KindAtom fails while any live Node uses it, and
-deleting a PredicateAtom fails while any live Link uses it. Core does not
+does not fail. Deleting a KindAtom fails while any stored Node uses it, and
+deleting a PredicateAtom fails while any live Predicate uses it. Core does not
 cascade-delete those users merely to remove their definition; unused
 application definitions may be deleted normally.
 
@@ -516,8 +567,8 @@ api.pretty(atom_id: AtomId, *, max_depth: int = 2) -> str
 ```
 
 Returns compact logical rendering for diagnostics. Deleted atoms render as
-`"<deleted>"`; Links use their PredicateAtom label and Ligatures use their own
-name.
+`"<deleted>"`; Predicates use their PredicateAtom label, Transitions render as
+`Transition(before, after)`, and Ligatures use their own name.
 
 For template-based rendering, pass the facade to
 `atomforge.renderer.Renderer`.
@@ -526,7 +577,8 @@ For template-based rendering, pass the facade to
 
 - `Atom(id, label, created_at_utc)`
 - `Node(kind, props)`
-- `Link(predicate, args)`
+- `Predicate(predicate, args)`
+- `Transition(args=(before, after))`
 - `Ligature(name, args)`
 - `KindAtom`
 - `PredicateAtom(arity, roles, template, anti_reflexive, acyclic)`

@@ -3,8 +3,11 @@ from atomforge.csv_import import import_links_csv
 
 
 space = AtomSpaceAPI.create()
+node_kind = space.kind("ImportedNode")
 
-report = import_links_csv(space, "intersection_graph.csv")
+report = import_links_csv(
+    space, "intersection_graph.csv", node_kind=node_kind
+)
 print(f"Loaded {report.nodes_created} nodes")
 print(f"Loaded {report.ligatures_created} ligatures")
 

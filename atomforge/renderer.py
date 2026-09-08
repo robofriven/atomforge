@@ -4,7 +4,9 @@ import re
 from dataclasses import dataclass
 from typing import Dict, List, Tuple
 
-from .atoms import AtomId, KindAtom, Ligature, Link, Node, PredicateAtom
+from .atoms import (
+    AtomId, KindAtom, Ligature, Node, Predicate, PredicateAtom, Transition,
+)
 from .facade import AtomSpaceAPI
 
 # Compile once
@@ -61,18 +63,25 @@ class Renderer:
             text = f"Pred({atom.label})" if atom.label else f"Pred#{atom_id}"
             return self._maybe_id(text, atom_id, opts)
 
-        if isinstance(atom, Link):
-            return self.render_link(atom_id, opts=opts)
+        if isinstance(atom, Predicate):
+            return self.render_predicate(atom_id, opts=opts)
+
+        if isinstance(atom, Transition):
+            return self.render_transition(atom_id, opts=opts)
 
         if isinstance(atom, Ligature):
             return self.render_ligature(atom_id, opts=opts)
 
         return self._maybe_id(f"Atom#{atom_id}", atom_id, opts)
 
-    def render_link(
-        self, link_id: AtomId, *, opts: RenderOptions = RenderOptions()
+    def render_predicate(
+        self, predicate_id: AtomId, *, opts: RenderOptions = RenderOptions()
     ) -> str:
-        return self._render_link_inner(link_id, depth=opts.max_depth, opts=opts)
+        return self._render_predicate_inner(
+            predicate_id, depth=opts.max_depth, opts=opts
+        )
+
+    render_link = render_predicate
 
     def render_ligature(
         self, ligature_id: AtomId, *, opts: RenderOptions = RenderOptions()
@@ -80,6 +89,29 @@ class Renderer:
         return self._render_ligature_inner(
             ligature_id, depth=opts.max_depth, opts=opts
         )
+
+    def render_transition(
+        self, transition_id: AtomId, *, opts: RenderOptions = RenderOptions()
+    ) -> str:
+        return self._render_transition_inner(
+            transition_id, depth=opts.max_depth, opts=opts
+        )
+
+    def _render_transition_inner(
+        self, transition_id: AtomId, depth: int, *, opts: RenderOptions
+    ) -> str:
+        atom = self.api.get(transition_id)
+        if atom is None:
+            return self._maybe_id("<deleted>", transition_id, opts)
+        if not isinstance(atom, Transition):
+            return self.render(transition_id, opts=opts)
+        if depth <= 0:
+            return self._maybe_id("Transition(...)", transition_id, opts)
+        inside = ", ".join(
+            self._render_arg(atom_id, depth - 1, opts=opts)
+            for atom_id in atom.args
+        )
+        return self._maybe_id(f"Transition({inside})", transition_id, opts)
 
     def _render_ligature_inner(
         self, ligature_id: AtomId, depth: int, *, opts: RenderOptions
@@ -97,20 +129,20 @@ class Renderer:
         )
         return self._maybe_id(f"{atom.name}({inside})", ligature_id, opts)
 
-    def _render_link_inner(
-        self, link_id: AtomId, depth: int, *, opts: RenderOptions
+    def _render_predicate_inner(
+        self, predicate_id: AtomId, depth: int, *, opts: RenderOptions
     ) -> str:
-        atom = self.api.get(link_id)
+        atom = self.api.get(predicate_id)
         if atom is None:
-            return self._maybe_id("<deleted>", link_id, opts)
-        if not isinstance(atom, Link):
-            return self.render(link_id, opts=opts)
+            return self._maybe_id("<deleted>", predicate_id, opts)
+        if not isinstance(atom, Predicate):
+            return self.render(predicate_id, opts=opts)
 
         pred_atom = self.api.get(atom.predicate)
         pred_name = getattr(pred_atom, "label", None) or f"Pred#{atom.predicate}"
 
         if depth <= 0:
-            return self._maybe_id(f"{pred_name}(...)", link_id, opts)
+            return self._maybe_id(f"{pred_name}(...)", predicate_id, opts)
 
         rendered_args: List[str] = []
         for i, aid in enumerate(atom.args):
@@ -126,14 +158,16 @@ class Renderer:
 
         inside = ", ".join(rendered_args)
         text = f"{pred_name}({inside})"
-        return self._maybe_id(text, link_id, opts)
+        return self._maybe_id(text, predicate_id, opts)
 
     def _render_arg(self, atom_id: AtomId, depth: int, *, opts: RenderOptions) -> str:
         atom = self.api.get(atom_id)
         if atom is None:
             return "<deleted>"
-        if isinstance(atom, Link):
-            return self._render_link_inner(atom_id, depth=depth, opts=opts)
+        if isinstance(atom, Predicate):
+            return self._render_predicate_inner(atom_id, depth=depth, opts=opts)
+        if isinstance(atom, Transition):
+            return self._render_transition_inner(atom_id, depth=depth, opts=opts)
         if isinstance(atom, Ligature):
             return self._render_ligature_inner(atom_id, depth=depth, opts=opts)
         return self.render(atom_id, opts=opts)
@@ -146,8 +180,10 @@ class Renderer:
         atom = self.api.get(atom_id)
         if atom is None:
             return "<deleted>"
-        if isinstance(atom, Link):
-            return self._render_link_pretty(atom, depth=depth)
+        if isinstance(atom, Predicate):
+            return self._render_predicate_pretty(atom, depth=depth)
+        if isinstance(atom, Transition):
+            return self.render_transition(atom.id)
         if isinstance(atom, Ligature):
             return self._render_ligature_pretty(atom, depth=depth)
         return self._render_atom_pretty(atom_id)
@@ -177,7 +213,7 @@ class Renderer:
             return f"{items[0]} and {items[1]}"
         return ", ".join(items[:-1]) + f", and {items[-1]}"
 
-    def _render_link_pretty(self, link: Link, *, depth: int) -> str:
+    def _render_predicate_pretty(self, predicate: Predicate, *, depth: int) -> str:
         """
         Template-driven pretty rendering.
 
@@ -185,30 +221,30 @@ class Renderer:
         Template tokens support:
           {role}             -> substituted value
           {a:role}           -> adds a/an article
-          {paren:role}       -> wraps in (...) if that arg is a Link or Ligature
+          {paren:role}       -> wraps in (...) if that arg is a relationship
           {join:role}        -> joins all args mapped to that role (useful for variadic)
         Always provides arg0, arg1, ... keys.
         """
         if depth <= 0:
             return "…"
 
-        pred_atom = self.api.get(link.predicate)
+        pred_atom = self.api.get(predicate.predicate)
         template = getattr(pred_atom, "template", None) if pred_atom else None
 
         # No template? Fall back to structural renderer.
         if not template or not isinstance(template, str) or not template.strip():
-            return self.render(link.id)
+            return self.render(predicate.id)
 
         def r(aid: AtomId) -> str:
             return self.render_pretty(aid, depth=depth - 1)
 
         def is_relationship(aid: AtomId) -> bool:
-            return isinstance(self.api.get(aid), (Link, Ligature))
+            return isinstance(self.api.get(aid), (Predicate, Transition, Ligature))
 
         mapping: Dict[str, str] = {}
         role_to_vals: Dict[str, List[Tuple[AtomId, str]]] = {}
 
-        for i, aid in enumerate(link.args):
+        for i, aid in enumerate(predicate.args):
             txt = r(aid)
             mapping[f"arg{i}"] = txt
 

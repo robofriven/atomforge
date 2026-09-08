@@ -19,7 +19,7 @@ class ImportReport:
 
 
 def import_links_csv(
-    space: AtomSpaceAPI, path: Union[str, Path]
+    space: AtomSpaceAPI, path: Union[str, Path], *, node_kind: AtomId
 ) -> ImportReport:
     """Load binary Ligatures from a four-column CSV fixture."""
     report = ImportReport()
@@ -32,7 +32,7 @@ def import_links_csv(
             if isinstance(space.get(atom_id), Node):
                 label_cache[label] = atom_id
                 return atom_id
-        atom_id = space.create_node(label, intern=True)
+        atom_id = space.create_node(label, kind=node_kind, intern=True)
         label_cache[label] = atom_id
         report.nodes_created += 1
         report.created_node_labels.append(label)

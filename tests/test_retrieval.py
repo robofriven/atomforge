@@ -8,10 +8,15 @@ class StructuralRetrievalTests(unittest.TestCase):
     def setUp(self):
         self.api = AtomSpaceAPI.create()
         self.container_kind = self.api.kind("Container")
+        self.node_kind = self.api.kind("TestNode")
         self.retriever = StructuralRetriever(self.api)
 
+    def node(self, label, **kwargs):
+        kwargs.setdefault("kind", self.node_kind)
+        return self.api.create_node(label, **kwargs)
+
     def connected_context(self, name, *candidates):
-        container = self.api.create_node(name, kind=self.container_kind)
+        container = self.node(name, kind=self.container_kind)
         intersection = self.api.create_ligature(
             f"{name} intersection", *candidates
         )
@@ -21,8 +26,8 @@ class StructuralRetrievalTests(unittest.TestCase):
         return container, intersection, membership
 
     def test_two_candidates_find_intersection_container_and_depths(self):
-        left = self.api.create_node("left")
-        right = self.api.create_node("right")
+        left = self.node("left")
+        right = self.node("right")
         container, intersection, membership = self.connected_context(
             "context", left, right
         )
@@ -50,9 +55,9 @@ class StructuralRetrievalTests(unittest.TestCase):
         self.assertIn(membership, result.retrieved_atom_ids)
 
     def test_more_candidate_coverage_ranks_before_less(self):
-        first = self.api.create_node("first")
-        second = self.api.create_node("second")
-        third = self.api.create_node("third")
+        first = self.node("first")
+        second = self.node("second")
+        third = self.node("third")
         broad = self.api.create_ligature("broad", first, second, third)
         narrow = self.api.create_ligature("narrow", first, second)
 
@@ -69,11 +74,11 @@ class StructuralRetrievalTests(unittest.TestCase):
         )
 
     def test_shorter_combined_depth_ranks_higher(self):
-        left = self.api.create_node("left")
-        right = self.api.create_node("right")
+        left = self.node("left")
+        right = self.node("right")
         near = self.api.create_ligature("near", left, right)
-        middle_left = self.api.create_node("middle left")
-        middle_right = self.api.create_node("middle right")
+        middle_left = self.node("middle left")
+        middle_right = self.node("middle right")
         self.api.create_ligature("left path", left, middle_left)
         self.api.create_ligature("right path", right, middle_right)
         far = self.api.create_ligature("far", middle_left, middle_right)
@@ -91,14 +96,14 @@ class StructuralRetrievalTests(unittest.TestCase):
         })
 
     def test_tied_intersections_and_tied_containers_are_retained(self):
-        left = self.api.create_node("left")
-        right = self.api.create_node("right")
+        left = self.node("left")
+        right = self.node("right")
         first_intersection = self.api.create_ligature("first", left, right)
         second_intersection = self.api.create_ligature("second", left, right)
-        first_container = self.api.create_node(
+        first_container = self.node(
             "first context", kind=self.container_kind
         )
-        second_container = self.api.create_node(
+        second_container = self.node(
             "second context", kind=self.container_kind
         )
         self.api.create_ligature(
@@ -125,9 +130,9 @@ class StructuralRetrievalTests(unittest.TestCase):
         )
 
     def test_multiple_intersections_can_support_same_container(self):
-        left = self.api.create_node("left")
-        right = self.api.create_node("right")
-        container = self.api.create_node("context", kind=self.container_kind)
+        left = self.node("left")
+        right = self.node("right")
+        container = self.node("context", kind=self.container_kind)
         for name in ("first", "second"):
             intersection = self.api.create_ligature(name, left, right)
             self.api.create_ligature(name + " membership", intersection, container)
@@ -143,8 +148,8 @@ class StructuralRetrievalTests(unittest.TestCase):
         self.assertEqual(len(result.ranked_containers[0].evidence), 2)
 
     def test_no_intersection_and_no_container_are_explicit(self):
-        left = self.api.create_node("left")
-        right = self.api.create_node("right")
+        left = self.node("left")
+        right = self.node("right")
         empty = self.retriever.retrieve(
             [left, right],
             container_definition_id=self.container_kind,
@@ -167,10 +172,10 @@ class StructuralRetrievalTests(unittest.TestCase):
         self.assertEqual(no_container.container_evidence, ())
 
     def test_bounded_retrieval_excludes_unrelated_region(self):
-        left = self.api.create_node("left")
-        right = self.api.create_node("right")
+        left = self.node("left")
+        right = self.node("right")
         container, _, _ = self.connected_context("context", left, right)
-        unrelated = self.api.create_node("unrelated")
+        unrelated = self.node("unrelated")
         unrelated_link = self.api.create_ligature("remote", left, unrelated)
 
         result = self.retriever.retrieve(
@@ -187,9 +192,9 @@ class StructuralRetrievalTests(unittest.TestCase):
 
     def test_kind_boundary_is_respected_end_to_end(self):
         shared_kind = self.api.kind("Shared")
-        left = self.api.create_node("left", kind=shared_kind)
-        right = self.api.create_node("right", kind=shared_kind)
-        hidden_container = self.api.create_node(
+        left = self.node("left", kind=shared_kind)
+        right = self.node("right", kind=shared_kind)
+        hidden_container = self.node(
             "hidden", kind=self.container_kind
         )
         self.api.create_ligature(
@@ -207,9 +212,9 @@ class StructuralRetrievalTests(unittest.TestCase):
         self.assertEqual(result.subgraphs, ())
 
     def test_overlapping_contexts_use_intersection_before_container_search(self):
-        person = self.api.create_node("person")
-        object_one = self.api.create_node("object one")
-        object_two = self.api.create_node("object two")
+        person = self.node("person")
+        object_one = self.node("object one")
+        object_two = self.node("object two")
         relevant, _, _ = self.connected_context(
             "relevant", person, object_one
         )
@@ -228,7 +233,7 @@ class StructuralRetrievalTests(unittest.TestCase):
         self.assertNotIn(irrelevant, result.retrieved_atom_ids)
 
     def test_invalid_candidates_and_depths_are_rejected(self):
-        valid = self.api.create_node("valid")
+        valid = self.node("valid")
         with self.assertRaises(UnknownAtomError):
             self.retriever.retrieve(
                 [valid, 99999],

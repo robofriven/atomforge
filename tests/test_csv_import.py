@@ -13,7 +13,8 @@ class CsvGraphFixtureTests(unittest.TestCase):
         path = Path(temporary.name) / "graph.csv"
         path.write_text(content, encoding="utf-8")
         api = AtomSpaceAPI.create()
-        report = import_links_csv(api, path)
+        node_kind = api.kind("ImportedNode")
+        report = import_links_csv(api, path, node_kind=node_kind)
         return api, report
 
     def test_creates_binary_ligature_and_referenced_nodes(self):
@@ -42,9 +43,10 @@ class CsvGraphFixtureTests(unittest.TestCase):
             encoding="utf-8",
         )
         api = AtomSpaceAPI.create()
-        john = api.create_node("John")
+        node_kind = api.kind("ImportedNode")
+        john = api.create_node("John", kind=node_kind)
 
-        report = import_links_csv(api, path)
+        report = import_links_csv(api, path, node_kind=node_kind)
 
         self.assertEqual(report.nodes_created, 1)
         self.assertEqual(api.search(atom_type=Ligature)[0].atom.args[0], john)

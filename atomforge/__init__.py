@@ -1,5 +1,6 @@
 from .atoms import (
-    Atom, AtomId, KindAtom, Ligature, Link, Node, PredicateAtom,
+    Atom, AtomId, KindAtom, Ligature, Link, Node, Predicate, PredicateAtom,
+    Transition,
     Intersection, RawAtomResult, SearchResult, StructuralSearchResult,
     TraversalResult,
 )
@@ -14,7 +15,9 @@ from .infrastructure import (
 )
 
 __all__ = [
-    "AtomSpaceAPI", "Atom", "AtomId", "Node", "Link", "Ligature", "KindAtom",
+    "AtomSpaceAPI", "Atom", "AtomId", "Node", "Predicate", "Transition",
+    "Link",
+    "Ligature", "KindAtom",
     "PredicateAtom", "RawAtomResult",
     "SearchResult", "TraversalResult", "StructuralSearchResult", "Intersection",
     "SCHEMA_VERSION", "AtomForgeError", "UnknownAtomError",
