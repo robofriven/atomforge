@@ -13,11 +13,18 @@ Presuppositions, per module:
   imply, or support one another).
 - ``relational`` — presupposes things standing in spatial, temporal, and
   part/whole relations.
+- ``speech`` — presupposes speakers.  ``Says`` mints the claim atoms
+  other modules wrap; it is the foundation the rest of this shelf
+  quietly stands on.
+- ``epistemic`` — presupposes believers: holders whose Believes /
+  Suspects / Knows are judged inside their own graph.  Depends on
+  ``speech``.
 - ``obligation`` — presupposes committers: agents that can want, need,
   promise, and agree.
 - ``preferences`` — presupposes holders of stances (loves/likes/hates).
 
-Dependency rule: stdagent modules may depend on Core (and ``preferences``
-on ``logic``); nothing here depends on any domain package, and Core never
+Dependency rule: stdagent modules may depend on Core and on stdagent
+modules below them (``preferences`` on ``logic``, ``epistemic`` on
+``speech``); nothing here depends on any domain package, and Core never
 depends on this package.
 """
