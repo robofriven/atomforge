@@ -74,7 +74,12 @@ class RuleSet:
         self, predicate: AtomId, args: Iterable[AtomId]
     ) -> tuple[AtomId, Arguments]:
         current_predicate = predicate
-        current_args = tuple(int(value) for value in args)
+        if any(
+            isinstance(value, bool) or not isinstance(value, int)
+            for value in args
+        ):
+            raise TypeError("atom ids must be ints; coercion is refused")
+        current_args = tuple(args)
         seen = set()
         while True:
             state = (current_predicate, current_args)

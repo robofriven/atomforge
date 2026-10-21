@@ -7,12 +7,5 @@ name = "atomforge"
 version = "0.0.2"
 description = "Domain-agnostic atom graph with indexed and topological relationships"
 
-[tool.setuptools]
-packages = [
-    "atomforge",
-    "atomforge.retrieval",
-    "atomforge.rules",
-    "atomforge.rules.generic",
-    "atomforge.predicates",
-    "atomforge.predicates.relational",
-]
+[tool.setuptools.packages.find]
+include = ["atomforge*"]

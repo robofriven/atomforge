@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import math
+import os
+import tempfile
 from collections import deque
 from dataclasses import asdict
 from datetime import datetime, timezone
@@ -74,12 +76,16 @@ class AtomSpace:
         return value
 
     def _store_atom(self, atom: Atom, *, confidence: float = 1.0) -> None:
+        # Validate everything before inserting anything: a failed write
+        # must leave no trace in the space (no atom, no index entry, no
+        # confidence entry), or one rejected call corrupts the graph.
+        validated_confidence = self._validated_confidence(
+            confidence, creation=True
+        )
         if atom.id in self._atoms or atom.id <= 0:
             raise GraphInvariantError(f"invalid or colliding atom id {atom.id}")
         self._atoms[atom.id] = atom
-        self._confidence[atom.id] = self._validated_confidence(
-            confidence, creation=True
-        )
+        self._confidence[atom.id] = validated_confidence
         self._index_atom(atom)
 
     def _index_atom(self, atom: Atom) -> None:
@@ -98,8 +104,25 @@ class AtomSpace:
                 (atom.predicate, atom.args), set()
             ).add(atom.id)
 
+    @staticmethod
+    def _strict_id(value: Any) -> AtomId:
+        # Atom ids are ints, exactly.  Floats, strings, and bools are
+        # refused, never coerced: silently truncating 5.9 onto atom 5
+        # would manufacture a link to the wrong atom (a false memory),
+        # where FTFO demands an error.
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise TypeError(
+                f"atom id must be an int, got {type(value).__name__}"
+            )
+        return value
+
+    @classmethod
+    def _strict_args(cls, args: Iterable[AtomId]) -> Tuple[AtomId, ...]:
+        return tuple(cls._strict_id(value) for value in args)
+
     def _require_physical(self, atom_id: AtomId) -> Atom:
-        if not isinstance(atom_id, int) or atom_id not in self._atoms:
+        self._strict_id(atom_id)
+        if atom_id not in self._atoms:
             raise UnknownAtomError(atom_id)
         return self._atoms[atom_id]
 
@@ -329,7 +352,7 @@ class AtomSpace:
             raise InvalidAtomOperationError(
                 "Core predicates require their dedicated API operations"
             )
-        arg_ids = tuple(int(value) for value in args)
+        arg_ids = self._strict_args(args)
         self._validate_predicate_application(predicate_id, arg_ids)
         dedup = self._dedup_predicates if deduplicate is None else deduplicate
         existing_ids = self._predicate_key_index.get((predicate_id, arg_ids), set())
@@ -369,7 +392,7 @@ class AtomSpace:
     ) -> AtomId:
         if not isinstance(name, str) or not name.strip():
             raise ValueError("Ligature name must be a non-empty string")
-        arg_ids = tuple(int(value) for value in args)
+        arg_ids = self._strict_args(args)
         if not arg_ids:
             raise ValueError("Ligature must connect at least one atom")
         for atom_id in arg_ids:
@@ -401,7 +424,7 @@ class AtomSpace:
         self, predicate: NameOrId, *args: AtomId
     ) -> List[SearchResult]:
         predicate_id = self._resolve_predicate(predicate)
-        wanted = tuple(int(value) for value in args)
+        wanted = self._strict_args(args)
         for atom_id in wanted:
             self._validate_address(atom_id)
         return [
@@ -577,6 +600,26 @@ class AtomSpace:
                     scheduled.add(relationship_id)
                     pending.append(relationship_id)
 
+        # Preflight: validate everything the mutation phase will do,
+        # before it does any of it, so a failure cannot leave a
+        # half-deleted closure behind.  (Validators therefore run twice
+        # for Delete assertions -- once here, once on creation; they
+        # must tolerate being consulted without a write occurring.)
+        for assertion_id in current_assertions:
+            if any(
+                not self._is_deleted(relationship_id)
+                for relationship_id in self._incoming_relationships.get(
+                    assertion_id, set()
+                )
+            ):
+                raise GraphInvariantError(
+                    "a Current assertion is illegally used by a live relationship"
+                )
+        for target in sorted(scheduled):
+            self._validate_predicate_application(
+                self.delete_predicate, (target,)
+            )
+
         for assertion_id in current_assertions:
             self._remove_atom_physical(assertion_id)
         deletion_assertions = {}
@@ -674,8 +717,26 @@ class AtomSpace:
             )
         # Validate creation metadata before writing any part of the structure.
         self._validated_confidence(confidence, creation=True)
-        before_was_current = bool(self._current_matches(before))
+        before_matches = self._current_matches(before)
         after_was_current = bool(self._current_matches(after))
+        before_was_current = bool(before_matches)
+        if before_was_current:
+            # Preflight the Current move as well: it must be able to
+            # complete before the Transition atom is stored, or the
+            # graph records a state change that never happened.
+            if len(before_matches) > 1:
+                raise GraphInvariantError(
+                    f"multiple Current assertions for {before}"
+                )
+            if any(
+                not self._is_deleted(relationship_id)
+                for relationship_id in self._incoming_relationships.get(
+                    before_matches[0], set()
+                )
+            ):
+                raise GraphInvariantError(
+                    "a Current assertion is illegally used by a live relationship"
+                )
 
         transition_id = self._alloc()
         self._store_atom(
@@ -890,9 +951,26 @@ class AtomSpace:
             "current_predicate": self.current_predicate,
             "delete_predicate": self.delete_predicate,
         }
-        Path(path).write_text(
-            json.dumps(data, indent=2, sort_keys=True), encoding="utf-8"
+        # Serialize fully in memory first: a serialization failure
+        # (e.g. a non-JSON prop value) must surface before the file on
+        # disk is touched, never as a truncated only copy of the graph.
+        text = json.dumps(data, indent=2, sort_keys=True)
+        target = Path(path)
+        fd, tmp_name = tempfile.mkstemp(
+            dir=target.parent, prefix=target.name + ".", suffix=".tmp"
         )
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                handle.write(text)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(tmp_name, target)
+        except BaseException:
+            try:
+                os.unlink(tmp_name)
+            except OSError:
+                pass
+            raise
 
     @classmethod
     def load(cls, path: Union[str, Path]) -> "AtomSpace":
