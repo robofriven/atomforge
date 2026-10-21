@@ -104,7 +104,7 @@ class CoercionTests(unittest.TestCase):
             self.core.find_predicates(self.predicate, float(self.a), self.b)
 
     def test_rules_layer_refuses_coercion_too(self):
-        from atomforge.predicates.relational import install
+        from atomforge.stdagent.relational import install
 
         api = AtomSpaceAPI.create()
         rel = install(api)

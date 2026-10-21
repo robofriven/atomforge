@@ -3,7 +3,7 @@
 import unittest
 
 from atomforge import AtomSpaceAPI
-from atomforge.predicates.logic import install
+from atomforge.stdagent.logic import install
 
 
 class LogicTests(unittest.TestCase):

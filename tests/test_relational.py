@@ -1,7 +1,7 @@
 import unittest
 
 from atomforge import AtomSpaceAPI
-from atomforge.predicates.relational import install
+from atomforge.stdagent.relational import install
 from atomforge.rules.generic import Inverse, RuleSet, Symmetric, Transitive
 
 

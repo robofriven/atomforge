@@ -1,6 +1,6 @@
 """Obligation predicate vocabulary and its domain-level rule semantics.
 
-Skeleton module, styled after ``predicates.relational``.  The vocabulary is
+Skeleton module, styled after ``stdagent.relational``.  The vocabulary is
 the modal / attitude family: desire, want, need, compulsion, obligation,
 commitment, and agreement.
 

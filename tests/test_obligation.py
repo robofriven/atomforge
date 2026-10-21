@@ -4,7 +4,7 @@ import unittest
 
 from atomforge import AtomSpaceAPI
 from atomforge.infrastructure import InvalidAtomOperationError, UnknownAtomError
-from atomforge.predicates.obligation import install
+from atomforge.stdagent.obligation import install
 
 
 class ObligationTests(unittest.TestCase):

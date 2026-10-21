@@ -47,13 +47,21 @@ assert api.get_raw(statement).deleted
 assert api.get(delete_assertion).predicate == api.delete_predicate
 ```
 
+## stdagent predicate libraries
+
+The shipped predicate vocabularies live under `atomforge.stdagent`. They
+are *not* domain-agnostic: each presupposes agents (things that hold
+stances, make claims, and commit), so a pure-data graph needs none of
+them. See the `atomforge/stdagent/__init__.py` docstring for each
+module's presupposition and the dependency rules.
+
 ## Relational predicates
 
 Relational behavior is optional and lives outside Core:
 
 ```python
 from atomforge import AtomSpaceAPI
-from atomforge.predicates.relational import install
+from atomforge.stdagent.relational import install
 
 api = AtomSpaceAPI.create()
 rel = install(api)

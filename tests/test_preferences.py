@@ -9,8 +9,8 @@ import unittest
 
 from atomforge import AtomSpaceAPI
 from atomforge.infrastructure import UnknownAtomError
-from atomforge.predicates.logic import install as install_logic
-from atomforge.predicates.preferences import install
+from atomforge.stdagent.logic import install as install_logic
+from atomforge.stdagent.preferences import install
 
 
 class PreferencesTests(unittest.TestCase):
