@@ -90,6 +90,22 @@ class PreferencesTests(unittest.TestCase):
             self.steak,
         )
 
+    def test_prefers_refuses_non_stance_arguments(self):
+        likes = self.pref.relate(self.pref.Likes, self.elena, self.shrimp)
+        with self.assertRaises(TypeError):
+            self.pref.relate(self.pref.Prefers, self.elena, self.shrimp)
+        with self.assertRaises(TypeError):
+            self.pref.relate(self.pref.Prefers, likes, self.shrimp)
+        with self.assertRaises(UnknownAtomError):
+            self.pref.relate(self.pref.Prefers, likes, 999999)
+
+    def test_prefers_refuses_mismatched_subjects(self):
+        robert = self.api.create_node("Robert", kind=self.kind)
+        hers = self.pref.relate(self.pref.Likes, self.elena, self.shrimp)
+        his = self.pref.relate(self.pref.Likes, robert, self.steak)
+        with self.assertRaises(TypeError):
+            self.pref.relate(self.pref.Prefers, hers, his)
+
     def test_prefers_is_transitive_for_has(self):
         st1 = self.pref.relate(self.pref.Likes, self.elena, self.shrimp)
         st2 = self.pref.relate(self.pref.Indifferent, self.elena, self.steak)

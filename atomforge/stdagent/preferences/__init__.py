@@ -129,6 +129,8 @@ class PreferencePredicates:
         name = self._name_of(predicate)
         if supersedes is not None:
             self._check_supersede(name, supersedes, left, right)
+        if name == "Prefers":
+            self._check_prefers_args(left, right)
         atom_id = self.rules.create_predicate(
             predicate,
             left,
@@ -186,6 +188,29 @@ class PreferencePredicates:
             raise TypeError(
                 "supersedes must name a stance assertion on the same "
                 "subject and target"
+            )
+
+    def _check_prefers_args(self, left: AtomId, right: AtomId) -> None:
+        """Prefers orders two stance assertions by the same subject.
+
+        Anything else — a person, a thing, stances by two different
+        subjects — is a category error, refused before any atom is
+        written rather than stored as a meaningless assertion whose
+        post-assertion hook silently no-ops.
+        """
+        stance_ids = {self.predicates[stance] for stance in _STANCES}
+        subjects = []
+        for arg in (left, right):
+            atom = self.api.get_raw(arg).atom
+            if not isinstance(atom, Predicate) or atom.predicate not in stance_ids:
+                raise TypeError(
+                    "Prefers relates two preference stance assertions, "
+                    f"not atom {arg!r}"
+                )
+            subjects.append(atom.args[0])
+        if subjects[0] != subjects[1]:
+            raise TypeError(
+                "Prefers requires stance assertions by the same subject"
             )
 
     def _name_of(self, predicate: AtomId) -> Optional[str]:
