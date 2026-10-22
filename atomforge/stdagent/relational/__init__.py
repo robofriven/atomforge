@@ -1,4 +1,18 @@
-"""Relational predicate vocabulary and its domain-level rule semantics."""
+"""Relational predicate vocabulary and its domain-level rule semantics.
+
+``IsA(specific, general)`` is the vocabulary's taxonomy predicate:
+directional and transitive.  Asserting IsA(Catholic, Christian) and
+IsA(Christian, Religion) makes IsA(Catholic, Religion) true at query
+time — the inference is evaluated by the rules layer, never written
+back as an atom — while the reverse stays false: a general category
+is not thereby a member of its own subcategory.  A hierarchy admits
+no self-loops and no cycles, so ``relate`` refuses those IsA
+assertions before anything is written.  Kind atoms are ordinary
+arguments here, so kind taxonomy is data in this same predicate —
+IsA(SexAct-kind, Act-kind) — not a special mechanism.
+:meth:`RelationalPredicates.is_a` answers the membership question
+("is this atom at or below that category?"), identity included.
+"""
 
 from __future__ import annotations
 
@@ -25,6 +39,7 @@ _RELATIONAL_SPECS = {
     "Wear": ("wearer", "thing"),
     "Own": ("owner", "thing"),
     "PartOf": ("part", "whole"),
+    "IsA": ("specific", "general"),
     "North": ("thing", "thing"),
     "South": ("thing", "thing"),
     "East": ("thing", "thing"),
@@ -58,12 +73,26 @@ class RelationalPredicates:
     def _install_rules(self) -> None:
         for name in ("Near", "Touch", "Attach"):
             self.rules.register(self.predicates[name], Symmetric())
-        for name in ("In", "Above", "PartOf", "North", "East"):
+        for name in ("In", "Above", "PartOf", "IsA", "North", "East"):
             self.rules.register(self.predicates[name], Transitive())
 
         self.rules.register(self.Below, Inverse(self.Above))
         self.rules.register(self.South, Inverse(self.North))
         self.rules.register(self.West, Inverse(self.East))
+
+    def _check_isa(self, specific: AtomId, general: AtomId) -> None:
+        """Preflight one IsA assertion: a hierarchy admits no self-loop
+        and no cycle.  The cycle check rides the transitive query —
+        if ``general`` already reaches ``specific``, the new edge
+        would close a loop and collapse the hierarchy at that pair.
+        Checked before anything is written, so a refused assertion
+        leaves the graph untouched."""
+        if specific == general:
+            raise TypeError("IsA cannot relate an atom to itself")
+        if self.has(self.IsA, general, specific):
+            raise TypeError(
+                "IsA assertion would close a cycle in the hierarchy"
+            )
 
     def relate(
         self,
@@ -75,6 +104,8 @@ class RelationalPredicates:
         confidence: float = 1.0,
     ) -> AtomId:
         """Assert one relationship using this vocabulary's canonicalization."""
+        if predicate == self.IsA:
+            self._check_isa(left, right)
         return self.rules.create_predicate(
             predicate,
             left,
@@ -92,6 +123,13 @@ class RelationalPredicates:
 
     has_predicate = has
     has_link = has
+
+    def is_a(self, specific: AtomId, general: AtomId) -> bool:
+        """Answer taxonomy membership: ``specific`` is ``general``
+        itself, or sits below it under asserted IsA edges.  Identity
+        counts as membership at query time, unlike in assertion —
+        relate() refuses a self-IsA as carrying no information."""
+        return specific == general or self.has(self.IsA, specific, general)
 
 
 def install(api: AtomSpaceAPI) -> RelationalPredicates:

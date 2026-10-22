@@ -54,7 +54,7 @@ class RelationalPredicateTests(unittest.TestCase):
         self.assertEqual(set(self.rel.predicates), {
             "At", "In", "On", "Near", "Above", "Below", "Ahead",
             "Behind", "Touch", "Attach", "Hold", "Wear", "Own",
-            "PartOf", "North", "South", "East", "West",
+            "PartOf", "IsA", "North", "South", "East", "West",
         })
         for removed in (
             "Action", "PickUp", "Drop", "Throw", "Give", "Transition",
@@ -95,5 +95,48 @@ class RelationalPredicateTests(unittest.TestCase):
         self.rel.relate(self.rel.Above, self.b, self.c)
         self.assertTrue(self.rel.has(self.rel.Above, self.a, self.b))
         self.assertTrue(self.rel.has(self.rel.Above, self.a, self.c))
+
+    def test_isa_is_transitive_directional_and_not_materialized(self):
+        catholic = self.api.create_node("Catholic", kind=self.node_kind)
+        christian = self.api.create_node("Christian", kind=self.node_kind)
+        religion = self.api.create_node("Religion", kind=self.node_kind)
+        self.rel.relate(self.rel.IsA, catholic, christian)
+        self.rel.relate(self.rel.IsA, christian, religion)
+        # Closure is evaluated at query time...
+        self.assertTrue(self.rel.has(self.rel.IsA, catholic, religion))
+        # ...never written back as an atom.
+        self.assertFalse(self.api.has_predicate(self.rel.IsA, catholic, religion))
+        self.assertEqual(len(self.api.predicates_of(self.rel.IsA)), 2)
+        # Directional: a Christian is not necessarily a Catholic.
+        self.assertFalse(self.rel.has(self.rel.IsA, christian, catholic))
+        self.assertFalse(self.rel.has(self.rel.IsA, religion, catholic))
+
+    def test_isa_refuses_self_loops_and_cycles(self):
+        with self.assertRaises(TypeError):
+            self.rel.relate(self.rel.IsA, self.a, self.a)
+        self.rel.relate(self.rel.IsA, self.a, self.b)
+        self.rel.relate(self.rel.IsA, self.b, self.c)
+        with self.assertRaises(TypeError):
+            self.rel.relate(self.rel.IsA, self.c, self.a)
+        with self.assertRaises(TypeError):
+            self.rel.relate(self.rel.IsA, self.b, self.a)
+        # Refusals wrote nothing.
+        self.assertEqual(len(self.api.predicates_of(self.rel.IsA)), 2)
+
+    def test_is_a_membership_includes_identity(self):
+        d = self.api.create_node("d", kind=self.node_kind)
+        self.rel.relate(self.rel.IsA, self.a, self.b)
+        self.rel.relate(self.rel.IsA, self.b, self.c)
+        self.assertTrue(self.rel.is_a(self.a, self.a))
+        self.assertTrue(self.rel.is_a(self.a, self.c))
+        self.assertFalse(self.rel.is_a(self.c, self.a))
+        self.assertFalse(self.rel.is_a(self.a, d))
+
+    def test_isa_over_kind_atoms(self):
+        act_kind = self.api.kind("Act")
+        sex_act_kind = self.api.kind("SexAct")
+        self.rel.relate(self.rel.IsA, sex_act_kind, act_kind)
+        self.assertTrue(self.rel.is_a(sex_act_kind, act_kind))
+        self.assertFalse(self.rel.is_a(act_kind, sex_act_kind))
 if __name__ == "__main__":
     unittest.main()
