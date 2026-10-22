@@ -63,6 +63,18 @@ confidence metadata either.  This module also does not record
 ``Contradicts`` atoms between tiers; tier conflicts on one claim are
 queryable via ``tier_of`` and left for the reasoner to weigh.
 
+Model error flags: ``ModelError(claim)`` is a unary provenance flag
+over a claim atom.  It asserts that the claim's *content* is an
+artifact of the generating model — a miscounted day, a swapped clock —
+retained in the graph for the record rather than deleted.  The saying
+of it may be perfectly true (a ``Says`` atom stands untouched); what
+the flag denies is the content's standing as fact.  Flagged claims are
+excluded from fact-grade use by consumers, and claims grounded in
+flagged claims inherit the taint — see ``downstream_of_flagged``.  The
+flag is orthogonal to tier: a holder may hold a flagged claim at any
+tier, which is exactly the historical situation the flag exists to
+describe honestly.
+
 Depends on the speech module (for ``Says`` speaker checks); speech
 does not depend on this one.
 """
@@ -115,6 +127,12 @@ class EpistemicPredicates:
             self.predicates[name] = predicate
             setattr(self, name, predicate)
         self._names = {predicate: name for name, predicate in self.predicates.items()}
+
+        # Unary provenance flag; arity differs from the tier specs, so
+        # it is installed outside the loop above.
+        self.ModelError = api.predicate("ModelError", arity=1, roles=("claim",))
+        self.predicates["ModelError"] = self.ModelError
+        self._names[self.ModelError] = "ModelError"
 
         self.rules = RuleSet(api)
 
@@ -430,6 +448,55 @@ class EpistemicPredicates:
     def holds(self, holder: AtomId, claim: AtomId) -> bool:
         """Whether the holder holds the claim at any tier."""
         return self._asserted_tier(holder, claim) is not None
+
+    # -- model error flags ---------------------------------------------------
+
+    def flag_model_error(
+        self,
+        claim: AtomId,
+        *,
+        label: Optional[str] = None,
+        confidence: float = 1.0,
+    ) -> AtomId:
+        """Assert ``ModelError(claim)``: the claim's content is a model
+        artifact, kept for the record, denied standing as fact."""
+        self._check_atom(claim, "claim")
+        return self.rules.create_predicate(
+            self.ModelError, claim, label=label, confidence=confidence,
+        )
+
+    def is_model_error(self, claim: AtomId) -> bool:
+        """Whether ``claim`` carries a ``ModelError`` flag."""
+        return self.api.has_predicate(self.ModelError, claim)
+
+    def model_errors(self) -> List[AtomId]:
+        """All claim atoms currently flagged ``ModelError``."""
+        flagged: List[AtomId] = []
+        for result in self.api.search(predicate=self.ModelError):
+            atom = result.atom
+            if isinstance(atom, Predicate):
+                flagged.append(atom.args[0])
+        return flagged
+
+    def downstream_of_flagged(self) -> List[AtomId]:
+        """Unflagged claims with at least one flagged ground.
+
+        The downstream consequence of a model error: anything resting
+        on it inherits the taint until re-grounded.  Direct grounds
+        only — one ``EvidenceFor`` hop — so the report stays a precise
+        list of what to re-examine, not a transitive smear.
+        """
+        flagged = set(self.model_errors())
+        tainted: List[AtomId] = []
+        seen = set()
+        for result in self.api.search(predicate=self.EvidenceFor):
+            atom = result.atom
+            if isinstance(atom, Predicate):
+                claim, ground = atom.args[0], atom.args[1]
+                if ground in flagged and claim not in flagged and claim not in seen:
+                    seen.add(claim)
+                    tainted.append(claim)
+        return tainted
 
 
 def install(api: AtomSpaceAPI) -> EpistemicPredicates:
