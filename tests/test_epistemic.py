@@ -270,6 +270,33 @@ class EpistemicTests(unittest.TestCase):
         )
         self.assertEqual(self.epi.tier_of(self.elena, self.claim), "Knows")
 
+    def test_deduced_knows_from_known_premise_needs_no_separate_evidence(self):
+        self.believe_ground()
+        inner = self.speech.claim_node("inner premise")
+        self.epi.relate(self.epi.Believes, self.elena, inner)
+        self.epi.relate(
+            self.epi.Knows, self.elena, self.ground, evidence=(inner,)
+        )
+        atom = self.epi.relate(
+            self.epi.Knows, self.elena, self.claim,
+            via="deduced", premises=(self.ground,),
+        )
+        self.assertEqual(self.epi.tier_of(self.elena, self.claim), "Knows")
+        self.assertIn("Premise", self.ligature_names(atom))
+
+    def test_deduced_believes_from_known_premise(self):
+        self.believe_ground()
+        inner = self.speech.claim_node("inner premise")
+        self.epi.relate(self.epi.Believes, self.elena, inner)
+        self.epi.relate(
+            self.epi.Knows, self.elena, self.ground, evidence=(inner,)
+        )
+        self.epi.relate(
+            self.epi.Believes, self.elena, self.claim,
+            via="deduced", premises=(self.ground,),
+        )
+        self.assertEqual(self.epi.tier_of(self.elena, self.claim), "Believes")
+
     def test_mode_arguments_without_via_refused(self):
         with self.assertRaises(TypeError):
             self.epi.relate(

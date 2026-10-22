@@ -51,6 +51,9 @@ before anything is written:
   and may only enter at ``Suspects``: induction never buys certainty.
 - ``via="deduced"`` — deduced from premises.  Requires ``premises=``;
   the conclusion's tier may not exceed the weakest premise's tier.
+  The premises are also recorded as grounds via ``EvidenceFor``,
+  like a discovery scene, so they satisfy the Knows evidence gate
+  on their own.
 
 Tier movement is revision, not editing: ``revise(old, tier, ...)``
 asserts the new tier with a Transition from the old atom, history
@@ -319,6 +322,12 @@ class EpistemicPredicates:
                         "weakest premise's tier"
                     )
                 ligatures.extend(("Premise", p) for p in premises)
+                # The premises are the deduction's evidence, the way
+                # a discovery scene is: they ground the conclusion,
+                # so a Knows conclusion from Known premises needs no
+                # separate evidence= restating them.
+                grounds.extend(premises)
+                believed_grounds.extend(premises)
         else:
             if teacher is not None or scene is not None \
                     or declaration is not None or premises or sources:
