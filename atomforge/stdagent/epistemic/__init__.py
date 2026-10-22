@@ -37,8 +37,16 @@ before anything is written:
 
 - ``via="learned"`` — taught.  Requires ``teacher=``.  If the claim is
   a ``Says`` atom, its speaker must be the teacher.
-- ``via="discovered"`` — found firsthand.  Requires ``scene=``; the
-  scene is also recorded as a ground via ``EvidenceFor``.
+- ``via="discovered"`` — found firsthand.  Requires ``scene=`` or
+  ``declaration=``; either is also recorded as a ground via
+  ``EvidenceFor``.  A declaration is a witnessed performative — a
+  consent, a promise, an agreement — where the saying *constitutes*
+  the claim rather than reporting it, so it warrants the way a scene
+  does: the holder was present at the fact's creation.  The claim
+  must be a predicate atom whose first argument is the declaration's
+  speaker; a declaration binds only its maker.  A *report* of a
+  performative — someone else's saying about it — is not a
+  declaration and stays ``learned``.
 - ``via="inferred"`` — induced from sources.  Requires ``sources=``
   and may only enter at ``Suspects``: induction never buys certainty.
 - ``via="deduced"`` — deduced from premises.  Requires ``premises=``;
@@ -158,6 +166,7 @@ class EpistemicPredicates:
         via: Optional[str] = None,
         teacher: Optional[AtomId] = None,
         scene: Optional[AtomId] = None,
+        declaration: Optional[AtomId] = None,
         evidence: Iterable[AtomId] = (),
         premises: Iterable[AtomId] = (),
         sources: Iterable[AtomId] = (),
@@ -175,9 +184,11 @@ class EpistemicPredicates:
             raise TypeError("predicate is not part of the epistemic vocabulary")
         if name == "EvidenceFor":
             if via is not None or teacher is not None or scene is not None \
+                    or declaration is not None \
                     or premises or sources or supersedes is not None:
                 raise TypeError("EvidenceFor takes no via/teacher/scene/"
-                                "premises/sources/supersedes arguments")
+                                "declaration/premises/sources/supersedes "
+                                "arguments")
             return self.evidence_for(holder, claim, label=label,
                                      confidence=confidence)
 
@@ -197,11 +208,13 @@ class EpistemicPredicates:
             self._check_atom(teacher, "teacher")
         if scene is not None:
             self._check_atom(scene, "scene")
+        if declaration is not None:
+            self._check_atom(declaration, "declaration")
 
         grounds = list(evidence)
         # Grounds the holder must separately believe for a Knows
-        # assertion.  A discovery scene is exempt: witnessing is
-        # self-warranting, the holder was there.
+        # assertion.  A discovery scene or a witnessed declaration is
+        # exempt: witnessing is self-warranting, the holder was there.
         believed_grounds = list(evidence)
         ligatures: List[Tuple[str, AtomId]] = []
 
@@ -211,9 +224,10 @@ class EpistemicPredicates:
             if via == "learned":
                 if teacher is None:
                     raise TypeError("via='learned' requires teacher=")
-                if premises or sources or scene is not None:
+                if premises or sources or scene is not None \
+                        or declaration is not None:
                     raise TypeError("via='learned' takes no premises, "
-                                    "sources, or scene")
+                                    "sources, scene, or declaration")
                 if self.speech.is_saying(claim):
                     speaker = self.speech.speaker_of(claim)
                     if speaker != teacher:
@@ -223,12 +237,34 @@ class EpistemicPredicates:
                         )
                 ligatures.append(("Teacher", teacher))
             elif via == "discovered":
-                if scene is None:
-                    raise TypeError("via='discovered' requires scene=")
+                if (scene is None) == (declaration is None):
+                    raise TypeError("via='discovered' requires exactly "
+                                    "one of scene= or declaration=")
                 if teacher is not None or premises or sources:
                     raise TypeError("via='discovered' takes no teacher, "
                                     "premises, or sources")
-                grounds.append(scene)
+                if scene is not None:
+                    grounds.append(scene)
+                else:
+                    if not self.speech.is_saying(declaration):
+                        raise TypeError(
+                            "via='discovered': declaration must be a "
+                            "Says atom"
+                        )
+                    claim_atom = self.api.get(claim)
+                    if not isinstance(claim_atom, Predicate):
+                        raise TypeError(
+                            "via='discovered': a declaration warrants "
+                            "a performative predicate claim, not a "
+                            "bare node"
+                        )
+                    if not claim_atom.args or claim_atom.args[0] != \
+                            self.speech.speaker_of(declaration):
+                        raise TypeError(
+                            "via='discovered': the declaration's "
+                            "speaker is not the party the claim binds"
+                        )
+                    grounds.append(declaration)
             elif via == "inferred":
                 if name != "Suspects":
                     raise TypeError(
@@ -237,16 +273,18 @@ class EpistemicPredicates:
                     )
                 if not sources:
                     raise TypeError("via='inferred' requires sources=")
-                if teacher is not None or premises or scene is not None:
+                if teacher is not None or premises or scene is not None \
+                        or declaration is not None:
                     raise TypeError("via='inferred' takes no teacher, "
-                                    "premises, or scene")
+                                    "premises, scene, or declaration")
                 ligatures.extend(("Source", s) for s in sources)
             elif via == "deduced":
                 if not premises:
                     raise TypeError("via='deduced' requires premises=")
-                if teacher is not None or sources or scene is not None:
+                if teacher is not None or sources or scene is not None \
+                        or declaration is not None:
                     raise TypeError("via='deduced' takes no teacher, "
-                                    "sources, or scene")
+                                    "sources, scene, or declaration")
                 weakest: Optional[int] = None
                 for premise in premises:
                     tier = self._asserted_tier(holder, premise)
@@ -264,9 +302,11 @@ class EpistemicPredicates:
                     )
                 ligatures.extend(("Premise", p) for p in premises)
         else:
-            if teacher is not None or scene is not None or premises or sources:
+            if teacher is not None or scene is not None \
+                    or declaration is not None or premises or sources:
                 raise TypeError(
-                    "teacher/scene/premises/sources require a via= mode"
+                    "teacher/scene/declaration/premises/sources require "
+                    "a via= mode"
                 )
 
         if name == "Knows":

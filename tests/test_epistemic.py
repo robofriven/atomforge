@@ -144,6 +144,84 @@ class EpistemicTests(unittest.TestCase):
         )
         self.assertIn(self.scene, self.epi.evidence_of(self.claim))
 
+    # -- discovered via declaration: witnessed performatives -------------
+
+    def performative_claim(self):
+        permits = self.api.predicate("Permits", arity=2)
+        act = self.api.create_node("sleep-use", kind=self.kind)
+        return self.api.create_predicate(permits, self.robert, act)
+
+    def test_knows_via_witnessed_declaration(self):
+        claim = self.performative_claim()
+        saying = self.speech.say(
+            self.robert, "blanket permission while you sleep, except anal"
+        )
+        self.epi.relate(
+            self.epi.Knows, self.elena, claim,
+            via="discovered", declaration=saying,
+        )
+        self.assertEqual(self.epi.tier_of(self.elena, claim), "Knows")
+        self.assertIn(saying, self.epi.evidence_of(claim))
+
+    def test_declaration_is_self_warranting(self):
+        # Elena need not hold any stance on the saying itself: she was
+        # there when the permission was created, as with a scene.
+        claim = self.performative_claim()
+        saying = self.speech.say(self.robert, "you may, whenever")
+        self.assertIsNone(self.epi.tier_of(self.elena, saying))
+        self.epi.relate(
+            self.epi.Knows, self.elena, claim,
+            via="discovered", declaration=saying,
+        )
+
+    def test_declaration_speaker_must_be_the_bound_party(self):
+        claim = self.performative_claim()
+        hearsay = self.speech.say(self.elena, "he said it is allowed")
+        with self.assertRaises(TypeError):
+            self.epi.relate(
+                self.epi.Knows, self.elena, claim,
+                via="discovered", declaration=hearsay,
+            )
+        self.assertIsNone(self.epi.tier_of(self.elena, claim))
+
+    def test_declaration_must_be_a_saying(self):
+        claim = self.performative_claim()
+        with self.assertRaises(TypeError):
+            self.epi.relate(
+                self.epi.Knows, self.elena, claim,
+                via="discovered", declaration=self.claim,
+            )
+
+    def test_declaration_claim_must_be_a_predicate(self):
+        saying = self.speech.say(self.robert, "the yellow rule stops him")
+        with self.assertRaises(TypeError):
+            self.epi.relate(
+                self.epi.Knows, self.elena, self.claim,
+                via="discovered", declaration=saying,
+            )
+
+    def test_discovered_takes_scene_or_declaration_not_both(self):
+        claim = self.performative_claim()
+        saying = self.speech.say(self.robert, "you may, whenever")
+        with self.assertRaises(TypeError):
+            self.epi.relate(
+                self.epi.Knows, self.elena, claim,
+                via="discovered", scene=self.scene, declaration=saying,
+            )
+
+    def test_declaration_requires_the_discovered_mode(self):
+        claim = self.performative_claim()
+        saying = self.speech.say(self.robert, "you may, whenever")
+        with self.assertRaises(TypeError):
+            self.epi.relate(
+                self.epi.Knows, self.elena, claim, declaration=saying,
+            )
+        with self.assertRaises(TypeError):
+            self.epi.relate(
+                self.epi.Believes, self.elena, claim,
+                via="learned", teacher=self.robert, declaration=saying,
+            )
+
     def test_inferred_only_enters_at_suspects(self):
         with self.assertRaises(TypeError):
             self.epi.relate(
