@@ -37,7 +37,6 @@ _RELATIONAL_SPECS = {
     "Attach": ("thing", "thing"),
     "Hold": ("holder", "thing"),
     "Wear": ("wearer", "thing"),
-    "Own": ("owner", "item"),
     "PartOf": ("part", "whole"),
     "IsA": ("specific", "general"),
     "North": ("thing", "thing"),

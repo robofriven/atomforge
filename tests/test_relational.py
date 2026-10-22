@@ -53,7 +53,7 @@ class RelationalPredicateTests(unittest.TestCase):
     def test_vocabulary_contains_only_relational_predicates(self):
         self.assertEqual(set(self.rel.predicates), {
             "At", "In", "On", "Near", "Above", "Below", "Ahead",
-            "Behind", "Touch", "Attach", "Hold", "Wear", "Own",
+            "Behind", "Touch", "Attach", "Hold", "Wear",
             "PartOf", "IsA", "North", "South", "East", "West",
         })
         for removed in (
@@ -139,18 +139,16 @@ class RelationalPredicateTests(unittest.TestCase):
         self.assertTrue(self.rel.is_a(sex_act_kind, act_kind))
         self.assertFalse(self.rel.is_a(act_kind, sex_act_kind))
 
-    def test_relational_and_possession_share_one_own(self):
+    def test_own_belongs_to_possession_not_relational(self):
         from atomforge.stdagent.possession import (
             install as install_possession,
         )
-        # Either install order: Own is one atom whose structure both
-        # modules agree on — (owner, item), possession's roles.
+        # Own is possession's predicate (title vs. Holds custody);
+        # relational does not define it, and the two modules install
+        # on one graph without a structure collision.
+        self.assertFalse(hasattr(self.rel, "Own"))
         possession = install_possession(self.api)
-        self.assertEqual(possession.Own, self.rel.Own)
-        api2 = AtomSpaceAPI.create()
-        possession2 = install_possession(api2)
-        rel2 = install(api2)
-        self.assertEqual(possession2.Own, rel2.Own)
+        self.assertIn("Own", possession.predicates)
 
     def test_kind_is_a_checks_nodes_kinds_and_other_atoms(self):
         subkind = self.api.kind("SubKind")
