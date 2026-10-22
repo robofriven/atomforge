@@ -5,6 +5,7 @@ import unittest
 from atomforge import AtomSpaceAPI
 from atomforge.infrastructure import UnknownAtomError
 from atomforge.stdagent.feels import install
+from atomforge.stdagent.relational import install as install_relational
 
 
 class FeelsTests(unittest.TestCase):
@@ -118,6 +119,25 @@ class FeelsTests(unittest.TestCase):
         other = self.api.predicate("Other", arity=2)
         with self.assertRaises(TypeError):
             self.feels.has(other, self.robert, self.elena)
+
+
+class FeelsHierarchyTests(unittest.TestCase):
+    """Kind checks are IsA-aware, as in the acts module."""
+
+    def setUp(self):
+        self.api = AtomSpaceAPI.create()
+        self.feels = install(self.api)
+        self.rel = install_relational(self.api)
+        self.kind = self.api.kind("Person")
+        self.elena = self.api.create_node("Elena", kind=self.kind)
+        self.mood_kind = self.api.kind("Mood")
+        self.anxious = self.api.create_node("anxious", kind=self.mood_kind)
+
+    def test_subkind_node_is_not_a_feeling_until_linked(self):
+        self.assertFalse(self.feels.is_feeling(self.anxious))
+        self.rel.relate(self.rel.IsA, self.mood_kind, self.feels.feeling_kind)
+        self.assertTrue(self.feels.is_feeling(self.anxious))
+        self.assertEqual(self.feels.feeling_node("anxious"), self.anxious)
 
 
 if __name__ == "__main__":

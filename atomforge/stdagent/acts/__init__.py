@@ -29,7 +29,9 @@ Minting discipline mirrors the feels module: callers match first
 against existing act nodes and name a new act so the name is
 self-describing.  The library never normalizes or merges act names.
 
-Depends on Core only.
+Depends on Core and the relational vocabulary: kind checks are
+IsA-aware — a node whose kind sits below Act in the IsA hierarchy
+validates as an act.
 """
 
 from __future__ import annotations
@@ -37,10 +39,11 @@ from __future__ import annotations
 from typing import Dict, List, Optional, Union
 from weakref import WeakKeyDictionary
 
-from ...atoms import AtomId, Node, Predicate
+from ...atoms import AtomId, Predicate
 from ...facade import AtomSpaceAPI
 from ...infrastructure import InvalidAtomOperationError, UnknownAtomError
 from ...rules.generic import RuleSet
+from ..relational import install as install_relational
 
 
 _ACT_SPECS = {
@@ -66,6 +69,7 @@ class ActPredicates:
             setattr(self, name, predicate)
         self._names = {predicate: name for name, predicate in self.predicates.items()}
         self.act_kind = api.kind("Act")
+        self.relational = install_relational(api)
 
         self.rules = RuleSet(api)
 
@@ -83,22 +87,20 @@ class ActPredicates:
         if not isinstance(text, str) or not text:
             raise TypeError("act text must be a non-empty string")
         for atom_id in self.api.find_by_label(text):
-            atom = self.api.get(atom_id)
-            if isinstance(atom, Node) and atom.kind == self.act_kind:
+            if self.relational.kind_is_a(atom_id, self.act_kind):
                 return atom_id
         return self.api.create_node(text, kind=self.act_kind)
 
     def is_act(self, atom_id: AtomId) -> bool:
-        """Return whether ``atom_id`` is a live ``Act`` node."""
-        atom = self.api.get(atom_id)
-        return isinstance(atom, Node) and atom.kind == self.act_kind
+        """Return whether ``atom_id`` is a live ``Act`` node — or a
+        node under a subkind of Act in the IsA hierarchy."""
+        return self.relational.kind_is_a(atom_id, self.act_kind)
 
     def _resolve_act(self, act: Union[AtomId, str]) -> AtomId:
         if isinstance(act, str):
             return self.act_node(act)
         self._check_atom(act, "act")
-        atom = self.api.get(act)
-        if not (isinstance(atom, Node) and atom.kind == self.act_kind):
+        if not self.relational.kind_is_a(act, self.act_kind):
             raise TypeError(
                 "Does target must be an Act node; mint one with act_node()"
             )

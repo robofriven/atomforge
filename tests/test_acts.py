@@ -5,6 +5,7 @@ import unittest
 from atomforge import AtomSpaceAPI
 from atomforge.infrastructure import UnknownAtomError
 from atomforge.stdagent.acts import install
+from atomforge.stdagent.relational import install as install_relational
 
 
 class ActsTests(unittest.TestCase):
@@ -68,6 +69,33 @@ class ActsTests(unittest.TestCase):
         other = self.api.predicate("Other", arity=2)
         with self.assertRaises(TypeError):
             self.acts.relate(other, self.robert, self.elena)
+
+
+class ActHierarchyTests(unittest.TestCase):
+    """Kind checks are IsA-aware: a node under a subkind of Act
+    validates as an act only while the IsA edge is asserted."""
+
+    def setUp(self):
+        self.api = AtomSpaceAPI.create()
+        self.acts = install(self.api)
+        self.rel = install_relational(self.api)
+        self.kind = self.api.kind("Person")
+        self.elena = self.api.create_node("Elena", kind=self.kind)
+        self.sex_act_kind = self.api.kind("SexAct")
+        self.rimming = self.api.create_node("rimming", kind=self.sex_act_kind)
+
+    def test_subkind_node_is_not_an_act_until_linked(self):
+        self.assertFalse(self.acts.is_act(self.rimming))
+        with self.assertRaises(TypeError):
+            self.acts.do(self.elena, self.rimming)
+        self.rel.relate(self.rel.IsA, self.sex_act_kind, self.acts.act_kind)
+        self.assertTrue(self.acts.is_act(self.rimming))
+        self.acts.do(self.elena, self.rimming)
+        self.assertTrue(self.acts.has(self.acts.Does, self.elena, self.rimming))
+
+    def test_act_node_dedup_finds_subkind_node(self):
+        self.rel.relate(self.rel.IsA, self.sex_act_kind, self.acts.act_kind)
+        self.assertEqual(self.acts.act_node("rimming"), self.rimming)
 
 
 if __name__ == "__main__":

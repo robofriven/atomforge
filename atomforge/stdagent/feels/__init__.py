@@ -42,8 +42,9 @@ would merge genuinely different feelings along with the duplicates,
 and the refusal to guess is what exposes a caller's naming mistakes
 instead of hiding them.
 
-Depends on Core only; the speech and epistemic modules do not depend
-on this one.
+Depends on Core and the relational vocabulary (kind checks are
+IsA-aware, as in the acts module); the speech and epistemic modules
+do not depend on this one.
 """
 
 from __future__ import annotations
@@ -51,10 +52,11 @@ from __future__ import annotations
 from typing import Dict, List, Optional, Union
 from weakref import WeakKeyDictionary
 
-from ...atoms import AtomId, Node, Predicate
+from ...atoms import AtomId, Predicate
 from ...facade import AtomSpaceAPI
 from ...infrastructure import InvalidAtomOperationError, UnknownAtomError
 from ...rules.generic import RuleSet
+from ..relational import install as install_relational
 
 
 _FEELS_SPECS = {
@@ -81,6 +83,7 @@ class FeelsPredicates:
             setattr(self, name, predicate)
         self._names = {predicate: name for name, predicate in self.predicates.items()}
         self.feeling_kind = api.kind("Feeling")
+        self.relational = install_relational(api)
 
         self.rules = RuleSet(api)
 
@@ -99,22 +102,20 @@ class FeelsPredicates:
         if not isinstance(text, str) or not text:
             raise TypeError("feeling text must be a non-empty string")
         for atom_id in self.api.find_by_label(text):
-            atom = self.api.get(atom_id)
-            if isinstance(atom, Node) and atom.kind == self.feeling_kind:
+            if self.relational.kind_is_a(atom_id, self.feeling_kind):
                 return atom_id
         return self.api.create_node(text, kind=self.feeling_kind)
 
     def is_feeling(self, atom_id: AtomId) -> bool:
-        """Return whether ``atom_id`` is a live ``Feeling`` node."""
-        atom = self.api.get(atom_id)
-        return isinstance(atom, Node) and atom.kind == self.feeling_kind
+        """Return whether ``atom_id`` is a live ``Feeling`` node — or
+        a node under a subkind of Feeling in the IsA hierarchy."""
+        return self.relational.kind_is_a(atom_id, self.feeling_kind)
 
     def _resolve_feeling(self, feeling: Union[AtomId, str]) -> AtomId:
         if isinstance(feeling, str):
             return self.feeling_node(feeling)
         self._check_atom(feeling, "feeling")
-        atom = self.api.get(feeling)
-        if not (isinstance(atom, Node) and atom.kind == self.feeling_kind):
+        if not self.relational.kind_is_a(feeling, self.feeling_kind):
             raise TypeError(
                 "Feels target must be a Feeling node; mint one with "
                 "feeling_node()"

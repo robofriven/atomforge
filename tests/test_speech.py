@@ -5,6 +5,7 @@ import unittest
 from atomforge import AtomSpaceAPI
 from atomforge.infrastructure import UnknownAtomError
 from atomforge.stdagent.speech import install
+from atomforge.stdagent.relational import install as install_relational
 
 
 class SpeechTests(unittest.TestCase):
@@ -80,6 +81,21 @@ class SpeechTests(unittest.TestCase):
         other = self.api.predicate("Other", arity=2)
         with self.assertRaises(TypeError):
             self.speech.relate(other, self.robert, self.elena)
+
+
+class SpeechHierarchyTests(unittest.TestCase):
+    """Claim dedup is IsA-aware, as in the acts and feels modules."""
+
+    def setUp(self):
+        self.api = AtomSpaceAPI.create()
+        self.speech = install(self.api)
+        self.rel = install_relational(self.api)
+        self.verse_kind = self.api.kind("Verse")
+        self.verse = self.api.create_node("a kept line", kind=self.verse_kind)
+
+    def test_claim_node_dedup_finds_subkind_node_once_linked(self):
+        self.rel.relate(self.rel.IsA, self.verse_kind, self.speech.claim_kind)
+        self.assertEqual(self.speech.claim_node("a kept line"), self.verse)
 
 
 if __name__ == "__main__":

@@ -19,7 +19,7 @@ from __future__ import annotations
 from typing import Dict, Optional
 from weakref import WeakKeyDictionary
 
-from ...atoms import AtomId
+from ...atoms import AtomId, KindAtom, Node
 from ...facade import AtomSpaceAPI
 from ...rules.generic import Inverse, RuleSet, Symmetric, Transitive
 
@@ -37,7 +37,7 @@ _RELATIONAL_SPECS = {
     "Attach": ("thing", "thing"),
     "Hold": ("holder", "thing"),
     "Wear": ("wearer", "thing"),
-    "Own": ("owner", "thing"),
+    "Own": ("owner", "item"),
     "PartOf": ("part", "whole"),
     "IsA": ("specific", "general"),
     "North": ("thing", "thing"),
@@ -130,6 +130,22 @@ class RelationalPredicates:
         counts as membership at query time, unlike in assertion —
         relate() refuses a self-IsA as carrying no information."""
         return specific == general or self.has(self.IsA, specific, general)
+
+    def kind_is_a(self, atom_id: AtomId, general_kind: AtomId) -> bool:
+        """Answer whether an atom's kind sits at or below
+        ``general_kind`` in the IsA hierarchy.  Accepts a Node (its
+        kind is checked) or a KindAtom (checked directly); any other
+        atom type is not kinded and answers False.  This is the
+        hierarchy-aware replacement for ``atom.kind == some_kind``
+        in module kind checks."""
+        atom = self.api.get(atom_id)
+        if isinstance(atom, KindAtom):
+            kind = atom.id
+        elif isinstance(atom, Node):
+            kind = atom.kind
+        else:
+            return False
+        return self.is_a(kind, general_kind)
 
 
 def install(api: AtomSpaceAPI) -> RelationalPredicates:

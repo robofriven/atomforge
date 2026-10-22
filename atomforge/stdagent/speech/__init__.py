@@ -29,10 +29,11 @@ from __future__ import annotations
 from typing import Dict, List, Optional, Union
 from weakref import WeakKeyDictionary
 
-from ...atoms import AtomId, Node, Predicate
+from ...atoms import AtomId, Predicate
 from ...facade import AtomSpaceAPI
 from ...infrastructure import InvalidAtomOperationError, UnknownAtomError
 from ...rules.generic import RuleSet
+from ..relational import install as install_relational
 
 
 _SPEECH_SPECS = {
@@ -58,6 +59,7 @@ class SpeechPredicates:
             setattr(self, name, predicate)
         self._names = {predicate: name for name, predicate in self.predicates.items()}
         self.claim_kind = api.kind("Claim")
+        self.relational = install_relational(api)
 
         self.rules = RuleSet(api)
 
@@ -74,8 +76,7 @@ class SpeechPredicates:
         if not isinstance(text, str) or not text:
             raise TypeError("claim text must be a non-empty string")
         for atom_id in self.api.find_by_label(text):
-            atom = self.api.get(atom_id)
-            if isinstance(atom, Node) and atom.kind == self.claim_kind:
+            if self.relational.kind_is_a(atom_id, self.claim_kind):
                 return atom_id
         return self.api.create_node(text, kind=self.claim_kind)
 

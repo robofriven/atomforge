@@ -138,5 +138,32 @@ class RelationalPredicateTests(unittest.TestCase):
         self.rel.relate(self.rel.IsA, sex_act_kind, act_kind)
         self.assertTrue(self.rel.is_a(sex_act_kind, act_kind))
         self.assertFalse(self.rel.is_a(act_kind, sex_act_kind))
+
+    def test_relational_and_possession_share_one_own(self):
+        from atomforge.stdagent.possession import (
+            install as install_possession,
+        )
+        # Either install order: Own is one atom whose structure both
+        # modules agree on — (owner, item), possession's roles.
+        possession = install_possession(self.api)
+        self.assertEqual(possession.Own, self.rel.Own)
+        api2 = AtomSpaceAPI.create()
+        possession2 = install_possession(api2)
+        rel2 = install(api2)
+        self.assertEqual(possession2.Own, rel2.Own)
+
+    def test_kind_is_a_checks_nodes_kinds_and_other_atoms(self):
+        subkind = self.api.kind("SubKind")
+        node = self.api.create_node("x", kind=subkind)
+        # Unlinked subkind: not yet under TestNode.
+        self.assertFalse(self.rel.kind_is_a(node, self.node_kind))
+        self.rel.relate(self.rel.IsA, subkind, self.node_kind)
+        self.assertTrue(self.rel.kind_is_a(node, self.node_kind))
+        # Kind atoms check directly; identity counts as membership.
+        self.assertTrue(self.rel.kind_is_a(subkind, self.node_kind))
+        self.assertTrue(self.rel.kind_is_a(self.node_kind, self.node_kind))
+        # A Predicate atom is not kinded.
+        link = self.rel.relate(self.rel.Near, self.a, self.b)
+        self.assertFalse(self.rel.kind_is_a(link, self.node_kind))
 if __name__ == "__main__":
     unittest.main()
