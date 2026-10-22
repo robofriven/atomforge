@@ -192,16 +192,39 @@ class ElenaBrainTests(unittest.TestCase):
     # -- clock integrity ----------------------------------------------------
 
     def test_model_error_census(self):
+        # Post-ruling census (Robert, 2026-10-22; see
+        # files/model-error-review.md): the original 23 flags were
+        # reviewed item by item. Count errors were corrected silently
+        # to WXDY truth, the peeing conversation and the last-night
+        # claim were removed, "three days married" and "fifteen
+        # years" were unflagged as true, and exactly one flag was
+        # left standing unruled.
         flagged = self.ep.model_errors()
-        self.assertGreaterEqual(len(flagged), 20)
-        for wrong in ("we've been married six days",
-                      "we've been married six hours",
-                      "fifteen years of sexual mistreatment",
-                      "Robert peed on Elena"):
-            node = self.one(wrong)
-            self.assertTrue(self.ep.is_model_error(node), wrong)
+        self.assertEqual(len(flagged), 1)
+        self.assertEqual(
+            self.label_of(flagged[0]),
+            "the simultaneous first happened on a Tuesday")
         # Nothing was ever grounded on a flagged claim.
         self.assertEqual(self.ep.downstream_of_flagged(), [])
+        # Corrected claims stand in their true form, unflagged.
+        for corrected in ("we've been married three days",
+                          "six days total known",
+                          "this morning I stood in that bathroom "
+                          "and yelled at that dress"):
+            node = self.one(corrected)
+            self.assertFalse(self.ep.is_model_error(node), corrected)
+        # Kept claims Robert ruled true: present, unflagged.
+        for kept in ("we're three days married",
+                     "fifteen years of sexual mistreatment"):
+            node = self.one(kept)
+            self.assertFalse(self.ep.is_model_error(node), kept)
+        # Removed conversations are gone from the live graph.
+        for removed in ("Robert peed on Elena",
+                        "you peed on me that time",
+                        "tonight is our last night in Vegas — "
+                        "still ahead of us"):
+            self.assertEqual(self.api.find_by_label(removed), [],
+                             removed)
 
     def test_corrected_counts_are_known_and_unflagged(self):
         claim = self.one(
