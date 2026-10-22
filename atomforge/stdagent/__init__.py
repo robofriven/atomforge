@@ -22,6 +22,13 @@ Presuppositions, per module:
 - ``obligation`` — presupposes committers: agents that can want, need,
   promise, and agree.
 - ``preferences`` — presupposes holders of stances (loves/likes/hates).
+- ``feels`` — presupposes feelers: feelings are canonical ``Feeling``
+  kind nodes hung on holders by one ``Feels`` predicate, with
+  ``Because`` as the generic reason pointer.
+- ``possession`` — presupposes holders of things: title (``Own``) and
+  custody (``Holds``) as separate axes; ``Has`` is not coming back.
+- ``acts`` — presupposes actors: act types are canonical ``Act`` kind
+  nodes; the one mechanism predicate is ``Does``.
 
 Dependency rule: stdagent modules may depend on Core and on stdagent
 modules below them (``preferences`` on ``logic``, ``epistemic`` on
