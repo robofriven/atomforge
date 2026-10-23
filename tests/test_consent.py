@@ -11,6 +11,13 @@ from atomforge.stdagent.logic import install as install_logic
 from atomforge.stdagent.speech import install as install_speech
 from atomforge.domain.consent import NEVER_EXPIRES, install, wxdy_key
 
+# These tests are about consent, not the act factory: they install the
+# acts module with a small fixture vocabulary so their act labels mint
+# under the v3 gated factory exactly as they did before it existed.
+FIXTURE_VOCABULARY = (
+    "hug", "being photographed", "surprise hugs", "plain act",
+)
+
 
 class ConsentTests(unittest.TestCase):
     def setUp(self):
@@ -19,8 +26,9 @@ class ConsentTests(unittest.TestCase):
         self.kind = self.api.kind("Person")
         self.robert = self.api.create_node("Robert", kind=self.kind)
         self.elena = self.api.create_node("Elena", kind=self.kind)
+        self.acts = install_acts(
+            self.api, vocabulary=FIXTURE_VOCABULARY)
         self.consent = install(self.api, owner=self.robert)
-        self.acts = install_acts(self.api)
         self.speech = install_speech(self.api)
         self.logic = install_logic(self.api)
         self.hug = self.acts.act_node("hug")
@@ -121,8 +129,8 @@ class ConsentTests(unittest.TestCase):
 
     def test_grant_without_recipient_or_owner_is_refused(self):
         api = AtomSpaceAPI.create()
+        acts = install_acts(api, vocabulary=FIXTURE_VOCABULARY)
         consent = install(api)  # no owner installed
-        acts = install_acts(api)
         speech = install_speech(api)
         elena = api.create_node("Elena", kind=api.kind("Person"))
         hug = acts.act_node("hug")

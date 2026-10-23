@@ -1,15 +1,37 @@
 """Act predicate vocabulary: acts as canonical atoms, not predicates.
 
 Presupposes actors — agents that do things.  Act types are unbounded
-vocabulary, like feelings: minting one predicate per act
-(``Hugs``, ``ProposesTo``, ``DrivesTo``, ...) is the over-predicating
-smell the feels module was built to avoid, with the same cure:
+vocabulary in the world, but they are NOT unbounded in the schema:
+minting one predicate per act (``Hugs``, ``ProposesTo``, ``DrivesTo``,
+...) is the over-predicating smell the feels module was built to avoid,
+and letting every caller coin act *terms* freely is the same smell one
+level down — the v2 brain grew 100 act labels for 191 occurrences,
+most of them one-off phrases with occasions, recipients, and scene
+flavor soldered into the label.  The v3 cure:
 
-- An act type is a ``Node`` atom of kind ``Act``, minted on demand
-  through :meth:`ActPredicates.act_node` — text in, deduplicated node
-  out.  The same text always resolves to the same act atom: one
-  canonical node per act type, however many occurrences point at it.
+- An act type is a ``Node`` atom of kind ``Act`` (or of the subkind
+  ``SexAct``), minted only through :meth:`ActPredicates.act_node`.
+- **Minting is gated by an approved vocabulary.**  The vocabulary is
+  data — by default the packaged ``vocabulary.json`` beside this
+  module, derived from the human-approved term list — never strings
+  scattered through code.  A label already standing in the graph as an
+  Act node always resolves (deduplication is not minting; consent's
+  exempt act atoms rely on this).  A label in the vocabulary mints a
+  term node of the right kind with its IsA parents asserted.  A label
+  in neither place is **refused and queued**: the attempt is recorded
+  in the installation's proposal queue (see
+  :meth:`ActPredicates.proposals`) and :class:`UnapprovedTermError`
+  is raised.  Nothing is silently minted, and nothing is normalized
+  or merged after the fact — a queued term enters the vocabulary only
+  by a human decision (:meth:`ActPredicates.approve_term`, or a new
+  vocabulary edition).
 - The one mechanism predicate is ``Does(actor, act)``.
+
+``SexAct`` is a real schema kind: ``IsA(SexAct, Act)`` at the kind
+level, asserted lazily the first time a SexAct term is minted, so
+``Does`` covers every sex act by kind inheritance.  Taxonomy below
+the kind level is IsA among term nodes (``fellatio`` IsA ``oral``),
+asserted from the vocabulary's parent lists when a term is minted.
 
 Occurrence counting and situated detail follow the canonical-act
 pattern: an act node's occurrences are the ``Does`` atoms pointing at
@@ -25,10 +47,6 @@ module knows nothing about permission, preference, or obligation: a
 ``Does`` atom records that an actor does (or did, or characteristically
 does) an act, and nothing about whether anyone wanted it done.
 
-Minting discipline mirrors the feels module: callers match first
-against existing act nodes and name a new act so the name is
-self-describing.  The library never normalizes or merges act names.
-
 Depends on Core and the relational vocabulary: kind checks are
 IsA-aware — a node whose kind sits below Act in the IsA hierarchy
 validates as an act.
@@ -36,7 +54,9 @@ validates as an act.
 
 from __future__ import annotations
 
-from typing import Dict, List, Optional, Union
+import json
+from pathlib import Path
+from typing import Dict, Iterable, List, Mapping, Optional, Tuple, Union
 from weakref import WeakKeyDictionary
 
 from ...atoms import AtomId, Predicate
@@ -50,18 +70,79 @@ _ACT_SPECS = {
     "Does": ("actor", "act"),
 }
 
+#: The packaged approved term vocabulary (vocabulary draft v3).
+VOCABULARY_PATH = Path(__file__).with_name("vocabulary.json")
+
+_KIND_NAMES = ("Act", "SexAct")
+
 _INSTALLATIONS: "WeakKeyDictionary[AtomSpaceAPI, ActPredicates]" = (
     WeakKeyDictionary()
 )
 
 
+class UnapprovedTermError(TypeError):
+    """An act label was refused: not in the graph, not in the
+    approved vocabulary.  The label has been recorded in the
+    installation's proposal queue for human review."""
+
+
+class _Term:
+    """One approved vocabulary term: its label, its kind, and the
+    labels (or kind names) it sits under in the IsA taxonomy."""
+
+    __slots__ = ("label", "kind", "parents")
+
+    def __init__(self, label: str, kind: str, parents: Tuple[str, ...]):
+        self.label = label
+        self.kind = kind
+        self.parents = parents
+
+
+def _normalize_vocabulary(source) -> Dict[str, _Term]:
+    """Normalize a vocabulary source into ``{label: _Term}``.
+
+    Accepted sources: ``None`` (the packaged vocabulary), a path to a
+    vocabulary JSON file, a mapping with a ``"terms"`` list, a list
+    of term mappings, or an iterable of bare labels (each an ``Act``
+    term with no term parents).
+    """
+    if source is None:
+        source = VOCABULARY_PATH
+    if isinstance(source, (str, Path)):
+        with open(source, "r", encoding="utf-8") as handle:
+            source = json.load(handle)
+    if isinstance(source, Mapping):
+        entries = source.get("terms", [])
+    else:
+        entries = list(source)
+    terms: Dict[str, _Term] = {}
+    for entry in entries:
+        if isinstance(entry, str):
+            terms[entry] = _Term(entry, "Act", ("Act",))
+            continue
+        label = entry["label"]
+        kind = entry.get("kind", "Act")
+        if kind not in _KIND_NAMES:
+            raise TypeError(
+                f"vocabulary term {label!r} names unknown kind {kind!r}"
+            )
+        parents = tuple(entry.get("parents", (kind,)))
+        terms[label] = _Term(label, kind, parents)
+    return terms
+
+
 class ActPredicates:
     """Installed act vocabulary bound to one :class:`AtomSpaceAPI`."""
 
-    def __init__(self, api: AtomSpaceAPI) -> None:
+    def __init__(
+        self, api: AtomSpaceAPI, vocabulary=None, _vocabulary_key=None
+    ) -> None:
         if not isinstance(api, AtomSpaceAPI):
             raise TypeError("api must be an AtomSpaceAPI")
         self.api = api
+        self._vocabulary_key = _vocabulary_key
+        self._terms: Dict[str, _Term] = _normalize_vocabulary(vocabulary)
+        self._proposals: List[str] = []
         self.predicates: Dict[str, AtomId] = {}
         for name, roles in _ACT_SPECS.items():
             predicate = api.predicate(name, arity=2, roles=roles)
@@ -69,6 +150,7 @@ class ActPredicates:
             setattr(self, name, predicate)
         self._names = {predicate: name for name, predicate in self.predicates.items()}
         self.act_kind = api.kind("Act")
+        self.sex_act_kind = api.kind("SexAct")
         self.relational = install_relational(api)
 
         self.rules = RuleSet(api)
@@ -76,20 +158,115 @@ class ActPredicates:
     def __getitem__(self, name: str) -> AtomId:
         return self.predicates[name]
 
-    # -- act atoms -------------------------------------------------------------
+    # -- vocabulary ------------------------------------------------------------
 
-    def act_node(self, text: str) -> AtomId:
-        """Return the act atom for a piece of text, minting it if new.
+    def vocabulary_terms(self) -> List[str]:
+        """Return the labels this installation may mint."""
+        return sorted(self._terms)
 
-        The same text always resolves to the same ``Act`` node.  The
-        text is used exactly as given and is never normalized.
-        """
-        if not isinstance(text, str) or not text:
-            raise TypeError("act text must be a non-empty string")
+    def proposals(self) -> List[str]:
+        """Return the labels refused so far, in first-refusal order:
+        the human review queue of candidate terms."""
+        return list(self._proposals)
+
+    def approve_term(
+        self,
+        label: str,
+        *,
+        kind: str = "Act",
+        parents: Iterable[str] = (),
+    ) -> None:
+        """Admit ``label`` to this installation's vocabulary — the
+        human gate acting on the proposal queue.  Runtime admission
+        only; a durable term belongs in the vocabulary data."""
+        if not isinstance(label, str) or not label:
+            raise TypeError("term label must be a non-empty string")
+        if kind not in _KIND_NAMES:
+            raise TypeError(f"unknown act kind {kind!r}")
+        parent_tuple = tuple(parents) or (kind,)
+        self._terms[label] = _Term(label, kind, parent_tuple)
+        if label in self._proposals:
+            self._proposals.remove(label)
+
+    def _ensure_sex_act_kind(self) -> None:
+        """Assert ``IsA(SexAct, Act)`` at the kind level, once.
+
+        Lazy on purpose: merely installing this module must not write
+        taxonomy into a graph (a hand-built SexAct subkind only joins
+        the Act hierarchy when the factory's taxonomy is exercised —
+        or when a caller asserts the edge themselves)."""
+        if not self.relational.has(
+            self.relational.IsA, self.sex_act_kind, self.act_kind
+        ):
+            self.relational.relate(
+                self.relational.IsA, self.sex_act_kind, self.act_kind
+            )
+
+    def _mint_term(self, term: _Term) -> AtomId:
+        """Mint a vocabulary term node with its IsA parents asserted.
+
+        Parent terms are minted recursively (hubs before leaves);
+        a parent naming a kind resolves to that kind atom itself."""
+        if term.kind == "SexAct":
+            self._ensure_sex_act_kind()
+        existing = self._find_act_node(term.label)
+        if existing is not None:
+            return existing
+        kind_atom = (
+            self.sex_act_kind if term.kind == "SexAct" else self.act_kind
+        )
+        node = self.api.create_node(term.label, kind=kind_atom)
+        for parent in term.parents:
+            if parent in _KIND_NAMES:
+                parent_atom = (
+                    self.sex_act_kind if parent == "SexAct"
+                    else self.act_kind
+                )
+            else:
+                parent_term = self._terms.get(parent)
+                if parent_term is None:
+                    raise TypeError(
+                        f"vocabulary term {term.label!r} names unknown "
+                        f"parent term {parent!r}"
+                    )
+                parent_atom = self._mint_term(parent_term)
+            if parent_atom != node:
+                self.relational.relate(
+                    self.relational.IsA, node, parent_atom
+                )
+        return node
+
+    def _find_act_node(self, text: str) -> Optional[AtomId]:
         for atom_id in self.api.find_by_label(text):
             if self.relational.kind_is_a(atom_id, self.act_kind):
                 return atom_id
-        return self.api.create_node(text, kind=self.act_kind)
+        return None
+
+    # -- act atoms -------------------------------------------------------------
+
+    def act_node(self, text: str) -> AtomId:
+        """Return the act atom for a piece of text.
+
+        Resolution order: an Act node already standing in the graph
+        with this label wins (deduplication — never a mint); a label
+        in the approved vocabulary mints its term node; anything else
+        is refused — the label joins the proposal queue and
+        :class:`UnapprovedTermError` is raised.
+        """
+        if not isinstance(text, str) or not text:
+            raise TypeError("act text must be a non-empty string")
+        existing = self._find_act_node(text)
+        if existing is not None:
+            return existing
+        term = self._terms.get(text)
+        if term is not None:
+            return self._mint_term(term)
+        if text not in self._proposals:
+            self._proposals.append(text)
+        raise UnapprovedTermError(
+            f"act label {text!r} is not in the approved vocabulary; "
+            "it has been queued as a term proposal instead of minted"
+        )
 
     def is_act(self, atom_id: AtomId) -> bool:
         """Return whether ``atom_id`` is a live ``Act`` node — or a
@@ -207,12 +384,41 @@ class ActPredicates:
         return found
 
 
-def install(api: AtomSpaceAPI) -> ActPredicates:
-    """Install and return an act vocabulary for ``api``."""
+def _vocabulary_key(vocabulary) -> object:
+    """A comparable identity for an install-time vocabulary argument,
+    so a second install() naming a *different* vocabulary fails loud
+    instead of silently returning the first installation."""
+    if vocabulary is None:
+        return ("packaged",)
+    if isinstance(vocabulary, (str, Path)):
+        return ("path", str(vocabulary))
+    if isinstance(vocabulary, Mapping):
+        return ("mapping", id(vocabulary))
+    return ("terms", tuple(sorted(str(v) for v in vocabulary)))
+
+
+def install(api: AtomSpaceAPI, vocabulary=None) -> ActPredicates:
+    """Install and return an act vocabulary for ``api``.
+
+    ``vocabulary`` selects the approved term list for the gated
+    factory: ``None`` for the packaged vocabulary, or any source
+    :func:`_normalize_vocabulary` accepts (a vocabulary file path, a
+    mapping, term entries, or bare labels).  One installation serves
+    one vocabulary; installing again with a different one raises.
+    """
     installed = _INSTALLATIONS.get(api)
-    if installed is None:
-        installed = ActPredicates(api)
-        _INSTALLATIONS[api] = installed
+    if installed is not None:
+        if vocabulary is not None and \
+                _vocabulary_key(vocabulary) != installed._vocabulary_key:
+            raise TypeError(
+                "acts already installed on this api with a different "
+                "vocabulary"
+            )
+        return installed
+    installed = ActPredicates(
+        api, vocabulary, _vocabulary_key=_vocabulary_key(vocabulary)
+    )
+    _INSTALLATIONS[api] = installed
     return installed
 
 
@@ -220,5 +426,6 @@ install_act_predicates = install
 Acts = ActPredicates
 
 __all__ = [
-    "ActPredicates", "Acts", "install", "install_act_predicates",
+    "ActPredicates", "Acts", "UnapprovedTermError", "VOCABULARY_PATH",
+    "install", "install_act_predicates",
 ]
