@@ -12,6 +12,21 @@ arguments here, so kind taxonomy is data in this same predicate —
 IsA(SexAct-kind, Act-kind) — not a special mechanism.
 :meth:`RelationalPredicates.is_a` answers the membership question
 ("is this atom at or below that category?"), identity included.
+
+Three v3 additions, all states or relations between atoms rather
+than anyone's doings:
+
+- ``AffixedTo(thing, person)`` — a thing fastened onto a body by
+  something that is not the thing's own design (tape, glue).  It is
+  not ``Wear``: wearing is the object's designed body-interface
+  doing the holding (the agent verb ``Wears`` lives in the actions
+  vocabulary); affixing is an external fastener doing it.
+- ``InsertedIn(thing, person)`` — a thing inside a body, where the
+  thing's state, not the inserting, is the fact.
+- ``Simultaneous(a, b)`` — concurrency between two atoms, symmetric:
+  two ``Orgasms`` applications linked ``Simultaneous`` are a
+  simultaneous orgasm; two events, a plan and a signal, any pair.
+  Asserting it of an atom and itself is refused.
 """
 
 from __future__ import annotations
@@ -35,6 +50,9 @@ _RELATIONAL_SPECS = {
     "Behind": ("thing", "thing"),
     "Touch": ("thing", "thing"),
     "Attach": ("thing", "thing"),
+    "AffixedTo": ("thing", "person"),
+    "InsertedIn": ("thing", "person"),
+    "Simultaneous": ("atom", "atom"),
     "Hold": ("holder", "thing"),
     "Wear": ("wearer", "thing"),
     "PartOf": ("part", "whole"),
@@ -70,7 +88,7 @@ class RelationalPredicates:
         return self.predicates[name]
 
     def _install_rules(self) -> None:
-        for name in ("Near", "Touch", "Attach"):
+        for name in ("Near", "Touch", "Attach", "Simultaneous"):
             self.rules.register(self.predicates[name], Symmetric())
         for name in ("In", "Above", "PartOf", "IsA", "North", "East"):
             self.rules.register(self.predicates[name], Transitive())
@@ -105,12 +123,37 @@ class RelationalPredicates:
         """Assert one relationship using this vocabulary's canonicalization."""
         if predicate == self.IsA:
             self._check_isa(left, right)
+        if predicate == self.Simultaneous and left == right:
+            raise TypeError(
+                "Simultaneous cannot relate an atom to itself"
+            )
         return self.rules.create_predicate(
             predicate,
             left,
             right,
             label=label,
             confidence=confidence,
+        )
+
+    def simultaneous(
+        self,
+        a: AtomId,
+        b: AtomId,
+        *,
+        label: Optional[str] = None,
+        confidence: float = 1.0,
+    ) -> AtomId:
+        """Assert ``Simultaneous(a, b)``: the two atoms are
+        concurrent.  Symmetric — one assertion answers both query
+        directions.  The helper canonicalizes argument order (lower
+        id first), so asserting the pair in either direction writes
+        the same single atom; a bare ``relate`` in reverse order is
+        still answered symmetrically by ``has`` but stores its own
+        atom, as with ``Near`` and ``Touch``."""
+        first, second = (a, b) if a < b else (b, a)
+        return self.relate(
+            self.Simultaneous, first, second,
+            label=label, confidence=confidence,
         )
 
     create_predicate = relate

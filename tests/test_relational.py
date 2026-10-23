@@ -55,6 +55,7 @@ class RelationalPredicateTests(unittest.TestCase):
             "At", "In", "On", "Near", "Above", "Below", "Ahead",
             "Behind", "Touch", "Attach", "Hold", "Wear",
             "PartOf", "IsA", "North", "South", "East", "West",
+            "AffixedTo", "InsertedIn", "Simultaneous",
         })
         for removed in (
             "Action", "PickUp", "Drop", "Throw", "Give", "Transition",
@@ -163,5 +164,59 @@ class RelationalPredicateTests(unittest.TestCase):
         # A Predicate atom is not kinded.
         link = self.rel.relate(self.rel.Near, self.a, self.b)
         self.assertFalse(self.rel.kind_is_a(link, self.node_kind))
+
+
+class BodyStateAndSimultaneousTests(unittest.TestCase):
+    """v3 relational additions: AffixedTo / InsertedIn (object-first
+    body states) and Simultaneous (symmetric concurrency)."""
+
+    def setUp(self):
+        self.api = AtomSpaceAPI.create()
+        self.rel = install(self.api)
+        person_kind = self.api.kind("Person")
+        object_kind = self.api.kind("Object")
+        self.elena = self.api.create_node("Elena", kind=person_kind)
+        self.vibe = self.api.create_node("vibe", kind=object_kind)
+        self.plug = self.api.create_node("plug", kind=object_kind)
+
+    def test_affixed_to_is_object_first_and_directional(self):
+        self.rel.relate(self.rel.AffixedTo, self.vibe, self.elena)
+        self.assertTrue(self.rel.has(
+            self.rel.AffixedTo, self.vibe, self.elena))
+        self.assertFalse(self.rel.has(
+            self.rel.AffixedTo, self.elena, self.vibe))
+
+    def test_inserted_in_is_object_first_and_directional(self):
+        self.rel.relate(self.rel.InsertedIn, self.plug, self.elena)
+        self.assertTrue(self.rel.has(
+            self.rel.InsertedIn, self.plug, self.elena))
+        self.assertFalse(self.rel.has(
+            self.rel.InsertedIn, self.elena, self.plug))
+
+    def test_simultaneous_is_symmetric_at_query_time(self):
+        self.rel.simultaneous(self.plug, self.vibe)
+        self.assertTrue(self.rel.has(
+            self.rel.Simultaneous, self.plug, self.vibe))
+        self.assertTrue(self.rel.has(
+            self.rel.Simultaneous, self.vibe, self.plug))
+        # One assertion stored; the reverse is a query consequence.
+        self.assertEqual(
+            len(self.api.predicates_of(self.rel.Simultaneous)), 1)
+
+    def test_simultaneous_reversed_assertion_is_the_same_fact(self):
+        first = self.rel.simultaneous(self.plug, self.vibe)
+        second = self.rel.simultaneous(self.vibe, self.plug)
+        self.assertEqual(first, second)
+
+    def test_simultaneous_self_pair_refused(self):
+        with self.assertRaises(TypeError):
+            self.rel.simultaneous(self.plug, self.plug)
+        with self.assertRaises(TypeError):
+            self.rel.relate(
+                self.rel.Simultaneous, self.plug, self.plug)
+        self.assertEqual(
+            len(self.api.predicates_of(self.rel.Simultaneous)), 0)
+
+
 if __name__ == "__main__":
     unittest.main()
