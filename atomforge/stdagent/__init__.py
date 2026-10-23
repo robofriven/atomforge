@@ -28,7 +28,13 @@ Presuppositions, per module:
 - ``possession`` — presupposes holders of things: title (``Own``) and
   custody (``Holds``) as separate axes; ``Has`` is not coming back.
 - ``acts`` — presupposes actors: act types are canonical ``Act`` kind
-  nodes; the one mechanism predicate is ``Does``.
+  nodes minted only from an approved vocabulary (unapproved labels
+  queue as proposals); the mechanism predicate is ``Does``, alongside
+  ``Restrains`` and the sex response predicates.
+- ``actions`` — presupposes agents with objects and each other: the
+  verb family partitions by its second argument — ``Use`` / ``Wears``
+  / ``Play`` take objects; ``Gives`` takes a recipient agent and
+  requires a payload (an act term or an object) on the frame.
 
 Dependency rule: stdagent modules may depend on Core and on stdagent
 modules below them (``preferences`` on ``logic``, ``epistemic`` on
