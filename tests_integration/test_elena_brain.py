@@ -207,10 +207,11 @@ class ElenaBrainTests(unittest.TestCase):
         # Nothing was ever grounded on a flagged claim.
         self.assertEqual(self.ep.downstream_of_flagged(), [])
         for first in (
-                "their first simultaneous orgasm — a shared orgasm — "
-                "came at the finish of the date-night session: she "
-                "came riding him, and her tightening put him over "
-                "the edge into the same orgasm",
+                "their first simultaneous orgasm came at the end of "
+                "the first night — the bar-hopping night — in its "
+                "small hours: her final ride, him still tied and "
+                "spread, at his own request ('Cum with me'), both of "
+                "them coming together",
                 "the bean town simultaneous was the first "
                 "simultaneous love-confession orgasm — the affection "
                 "orgasm — discovered on the drive, W2D1; simultaneous "
