@@ -47,6 +47,29 @@ module knows nothing about permission, preference, or obligation: a
 ``Does`` atom records that an actor does (or did, or characteristically
 does) an act, and nothing about whether anyone wanted it done.
 
+Two further families live here because they are facts about agents
+doing and undergoing, and no other shelf fits them yet:
+
+- ``Restrains(agent, person)`` — a *state*, not the act of tying: the
+  durable, searchable fact of a scene is who is restrained by whom
+  (the first simultaneous finish happens with him tied; being tied is
+  the condition the scene happens inside).  Its home in this module
+  is PROVISIONAL, like possession's ``Holds``: stdagent has no
+  physical/body shelf yet, and a provisional home in a real module
+  keeps the misfit visible instead of hiding it in a misc drawer.
+- The sex **response** predicates — ``EjaculatesOn(agent, target)``,
+  ``EjaculatesIn(agent, target)``, ``SquirtsOn(agent, target)``,
+  ``SquirtsIn(agent, target)``, and unary ``Orgasms(agent)``.
+  Responses are not claims (nobody *holds* a response) and not act
+  terms (a simultaneous orgasm is two ``Orgasms`` applications plus a
+  relational ``Simultaneous`` link, never a term).  The class is
+  closed and body-bounded, so its members are individual predicates,
+  each earning its place through the reuse and selectivity gates; a
+  response that has not graduated (trembling, gasping) stays in the
+  remembering layer's verses.  A target is a body part or an object —
+  or, for the In pair, the person — and is deliberately not
+  kind-gated: bodies are named by ordinary nodes.
+
 Depends on Core and the relational vocabulary: kind checks are
 IsA-aware — a node whose kind sits below Act in the IsA hierarchy
 validates as an act.
@@ -67,8 +90,18 @@ from ..relational import install as install_relational
 
 
 _ACT_SPECS = {
-    "Does": ("actor", "act"),
+    "Does": (2, ("actor", "act")),
+    "Restrains": (2, ("agent", "person")),
+    "EjaculatesOn": (2, ("agent", "target")),
+    "EjaculatesIn": (2, ("agent", "target")),
+    "SquirtsOn": (2, ("agent", "target")),
+    "SquirtsIn": (2, ("agent", "target")),
+    "Orgasms": (1, ("agent",)),
 }
+
+_BINARY_SPECS = frozenset(
+    name for name, (arity, _roles) in _ACT_SPECS.items() if arity == 2
+)
 
 #: The packaged approved term vocabulary (vocabulary draft v3).
 VOCABULARY_PATH = Path(__file__).with_name("vocabulary.json")
@@ -144,8 +177,8 @@ class ActPredicates:
         self._terms: Dict[str, _Term] = _normalize_vocabulary(vocabulary)
         self._proposals: List[str] = []
         self.predicates: Dict[str, AtomId] = {}
-        for name, roles in _ACT_SPECS.items():
-            predicate = api.predicate(name, arity=2, roles=roles)
+        for name, (arity, roles) in _ACT_SPECS.items():
+            predicate = api.predicate(name, arity=arity, roles=roles)
             self.predicates[name] = predicate
             setattr(self, name, predicate)
         self._names = {predicate: name for name, predicate in self.predicates.items()}
@@ -327,6 +360,85 @@ class ActPredicates:
             self.Does, actor, act_id, label=label, confidence=confidence
         )
 
+    def restrain(
+        self,
+        agent: AtomId,
+        person: AtomId,
+        *,
+        label: Optional[str] = None,
+        confidence: float = 1.0,
+    ) -> AtomId:
+        """Assert ``Restrains(agent, person)``: the state of ``person``
+        being restrained by ``agent`` for as long as the scene's
+        atoms say so — not the act of tying."""
+        self._check_atom(agent, "agent")
+        self._check_atom(person, "person")
+        return self.rules.create_predicate(
+            self.Restrains, agent, person,
+            label=label, confidence=confidence,
+        )
+
+    def _respond(
+        self,
+        predicate: AtomId,
+        agent: AtomId,
+        target: AtomId,
+        *,
+        label: Optional[str] = None,
+        confidence: float = 1.0,
+    ) -> AtomId:
+        self._check_atom(agent, "agent")
+        self._check_atom(target, "target")
+        return self.rules.create_predicate(
+            predicate, agent, target, label=label, confidence=confidence
+        )
+
+    def ejaculates_on(
+        self, agent: AtomId, target: AtomId, **kwargs
+    ) -> AtomId:
+        """Assert ``EjaculatesOn(agent, target)`` — target a body
+        part or an object."""
+        return self._respond(self.EjaculatesOn, agent, target, **kwargs)
+
+    def ejaculates_in(
+        self, agent: AtomId, target: AtomId, **kwargs
+    ) -> AtomId:
+        """Assert ``EjaculatesIn(agent, target)`` — the internal
+        finish, a trackable class of its own (the creampie grants
+        make it consent-relevant)."""
+        return self._respond(self.EjaculatesIn, agent, target, **kwargs)
+
+    def squirts_on(
+        self, agent: AtomId, target: AtomId, **kwargs
+    ) -> AtomId:
+        """Assert ``SquirtsOn(agent, target)``."""
+        return self._respond(self.SquirtsOn, agent, target, **kwargs)
+
+    def squirts_in(
+        self, agent: AtomId, target: AtomId, **kwargs
+    ) -> AtomId:
+        """Assert ``SquirtsIn(agent, target)``."""
+        return self._respond(self.SquirtsIn, agent, target, **kwargs)
+
+    def orgasms(
+        self,
+        agent: AtomId,
+        *,
+        label: Optional[str] = None,
+        confidence: float = 1.0,
+    ) -> AtomId:
+        """Assert ``Orgasms(agent)``.  Unary on purpose: an orgasm
+        has no target — it doesn't land anywhere.  Simultaneity is
+        two of these atoms plus a relational ``Simultaneous`` link."""
+        self._check_atom(agent, "agent")
+        return self.rules.create_predicate(
+            self.Orgasms, agent, label=label, confidence=confidence
+        )
+
+    def has_orgasm(self, agent: AtomId) -> bool:
+        """Whether an ``Orgasms(agent)`` atom stands."""
+        return self.api.has_predicate(self.Orgasms, agent)
+
     def relate(
         self,
         predicate: AtomId,
@@ -336,17 +448,33 @@ class ActPredicates:
         label: Optional[str] = None,
         confidence: float = 1.0,
     ) -> AtomId:
-        """Assert one act predicate (only ``Does`` exists here)."""
-        if predicate != self.Does:
+        """Assert one binary act predicate."""
+        name = self._names.get(predicate)
+        if name is None:
             raise TypeError("predicate is not part of the act vocabulary")
-        return self.do(left, right, label=label, confidence=confidence)
+        if name == "Orgasms":
+            raise TypeError(
+                "Orgasms is unary; assert it with orgasms()"
+            )
+        if name == "Does":
+            return self.do(left, right, label=label, confidence=confidence)
+        self._check_atom(left, "left")
+        self._check_atom(right, "right")
+        return self.rules.create_predicate(
+            predicate, left, right, label=label, confidence=confidence
+        )
 
     create_predicate = relate
     create_link = relate
 
     def has(self, predicate: AtomId, left: AtomId, right: AtomId) -> bool:
-        if predicate != self.Does:
+        name = self._names.get(predicate)
+        if name is None:
             raise TypeError("predicate is not part of the act vocabulary")
+        if name == "Orgasms":
+            raise TypeError(
+                "Orgasms is unary; query it with has_orgasm()"
+            )
         return self.rules.has_predicate(predicate, left, right)
 
     has_predicate = has

@@ -16,8 +16,11 @@ class ActsTests(unittest.TestCase):
         self.robert = self.api.create_node("Robert", kind=self.kind)
         self.elena = self.api.create_node("Elena", kind=self.kind)
 
-    def test_vocabulary_is_exactly_does(self):
-        self.assertEqual(set(self.acts.predicates), {"Does"})
+    def test_vocabulary_is_exact(self):
+        self.assertEqual(set(self.acts.predicates), {
+            "Does", "Restrains", "EjaculatesOn", "EjaculatesIn",
+            "SquirtsOn", "SquirtsIn", "Orgasms",
+        })
 
     def test_install_is_idempotent(self):
         self.assertIs(install(self.api), self.acts)
@@ -69,6 +72,86 @@ class ActsTests(unittest.TestCase):
         other = self.api.predicate("Other", arity=2)
         with self.assertRaises(TypeError):
             self.acts.relate(other, self.robert, self.elena)
+
+
+class RestraintAndResponseTests(unittest.TestCase):
+    """Restrains (a state, provisional home) and the sex response
+    predicates: closed class, suffixed pairs, unary Orgasms."""
+
+    def setUp(self):
+        self.api = AtomSpaceAPI.create()
+        self.acts = install(self.api)
+        self.kind = self.api.kind("Person")
+        self.robert = self.api.create_node("Robert", kind=self.kind)
+        self.elena = self.api.create_node("Elena", kind=self.kind)
+        part_kind = self.api.kind("BodyPart")
+        self.chest = self.api.create_node("chest", kind=part_kind)
+
+    def test_restrain_asserts_the_state(self):
+        self.acts.restrain(self.elena, self.robert)
+        self.assertTrue(self.acts.has(
+            self.acts.Restrains, self.elena, self.robert))
+        self.assertFalse(self.acts.has(
+            self.acts.Restrains, self.robert, self.elena))
+
+    def test_restrain_via_relate(self):
+        self.acts.relate(self.acts.Restrains, self.elena, self.robert)
+        self.assertTrue(self.acts.has(
+            self.acts.Restrains, self.elena, self.robert))
+
+    def test_restrain_rejects_unknown_atoms(self):
+        with self.assertRaises(UnknownAtomError):
+            self.acts.restrain(999999, self.robert)
+        with self.assertRaises(UnknownAtomError):
+            self.acts.restrain(self.elena, 999999)
+
+    def test_ejaculates_pairs(self):
+        self.acts.ejaculates_on(self.robert, self.chest)
+        self.acts.ejaculates_in(self.robert, self.elena)
+        self.assertTrue(self.acts.has(
+            self.acts.EjaculatesOn, self.robert, self.chest))
+        self.assertTrue(self.acts.has(
+            self.acts.EjaculatesIn, self.robert, self.elena))
+        # On and In are different predicates, never interchangeable.
+        self.assertFalse(self.acts.has(
+            self.acts.EjaculatesIn, self.robert, self.chest))
+        self.assertFalse(self.acts.has(
+            self.acts.EjaculatesOn, self.robert, self.elena))
+
+    def test_squirts_pairs(self):
+        cup = self.api.create_node(
+            "skull cup", kind=self.api.kind("Object"))
+        self.acts.squirts_on(self.elena, cup)
+        self.acts.squirts_in(self.elena, self.robert)
+        self.assertTrue(self.acts.has(
+            self.acts.SquirtsOn, self.elena, cup))
+        self.assertTrue(self.acts.has(
+            self.acts.SquirtsIn, self.elena, self.robert))
+
+    def test_responses_reject_unknown_target(self):
+        with self.assertRaises(UnknownAtomError):
+            self.acts.ejaculates_on(self.robert, 999999)
+        with self.assertRaises(UnknownAtomError):
+            self.acts.squirts_on(999999, self.chest)
+
+    def test_orgasms_is_unary(self):
+        self.acts.orgasms(self.elena)
+        self.assertTrue(self.acts.has_orgasm(self.elena))
+        self.assertFalse(self.acts.has_orgasm(self.robert))
+
+    def test_orgasms_refused_through_binary_paths(self):
+        with self.assertRaises(TypeError):
+            self.acts.relate(
+                self.acts.Orgasms, self.elena, self.robert)
+        with self.assertRaises(TypeError):
+            self.acts.has(self.acts.Orgasms, self.elena, self.robert)
+
+    def test_foreign_predicate_still_refused(self):
+        other = self.api.predicate("Other", arity=2)
+        with self.assertRaises(TypeError):
+            self.acts.relate(other, self.robert, self.elena)
+        with self.assertRaises(TypeError):
+            self.acts.has(other, self.robert, self.elena)
 
 
 class ActHierarchyTests(unittest.TestCase):
