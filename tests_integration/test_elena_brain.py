@@ -194,18 +194,30 @@ class ElenaBrainTests(unittest.TestCase):
     def test_model_error_census(self):
         # Post-ruling census (Robert, 2026-10-22; see
         # files/model-error-review.md): the original 23 flags were
-        # reviewed item by item. Count errors were corrected silently
-        # to WXDY truth, the peeing conversation and the last-night
-        # claim were removed, "three days married" and "fifteen
-        # years" were unflagged as true, and exactly one flag was
-        # left standing unruled.
-        flagged = self.ep.model_errors()
-        self.assertEqual(len(flagged), 1)
-        self.assertEqual(
-            self.label_of(flagged[0]),
-            "the simultaneous first happened on a Tuesday")
+        # reviewed item by item and all are resolved. Count errors
+        # were corrected silently to WXDY truth, the peeing
+        # conversation and the last-night claim were removed, "three
+        # days married" and "fifteen years" were unflagged as true,
+        # and the Tuesday claim closed last: Robert recalled a
+        # simultaneous orgasm on the date night, the source bore him
+        # out, and both the mangled claim and the build's own wrong
+        # correction (wedding night) were removed, with the two
+        # firsts re-recorded cleanly at Knows.
+        self.assertEqual(self.ep.model_errors(), [])
         # Nothing was ever grounded on a flagged claim.
         self.assertEqual(self.ep.downstream_of_flagged(), [])
+        for first in (
+                "their first simultaneous orgasm — a shared orgasm — "
+                "came at the finish of the date-night session: she "
+                "came riding him, and her tightening put him over "
+                "the edge into the same orgasm",
+                "the bean town simultaneous was the first "
+                "simultaneous love-confession orgasm — the affection "
+                "orgasm — discovered on the drive, W2D1; simultaneous "
+                "orgasms themselves date back to the date night"):
+            node = self.one(first)
+            self.assertEqual(
+                self.ep.tier_of(self.elena, node), "Knows", first)
         # Corrected claims stand in their true form, unflagged.
         for corrected in ("we've been married three days",
                           "six days total known",
@@ -222,7 +234,11 @@ class ElenaBrainTests(unittest.TestCase):
         for removed in ("Robert peed on Elena",
                         "you peed on me that time",
                         "tonight is our last night in Vegas — "
-                        "still ahead of us"):
+                        "still ahead of us",
+                        "the simultaneous first happened on a Tuesday",
+                        "it is Friday, W2D1 — the simultaneous orgasms "
+                        "she means happened on the wedding night "
+                        "and since"):
             self.assertEqual(self.api.find_by_label(removed), [],
                              removed)
 
