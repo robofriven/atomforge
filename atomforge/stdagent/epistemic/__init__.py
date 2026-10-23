@@ -60,11 +60,40 @@ asserts the new tier with a Transition from the old atom, history
 preserved.  Demotion is the normal case — a holder who stops believing
 their evidence falls from Knows back to Believes.
 
-Deliberate omissions: certainty (how sure a holder is, beyond tier) is
-not represented here — the word for it is unsettled and it is not Core
-confidence metadata either.  This module also does not record
-``Contradicts`` atoms between tiers; tier conflicts on one claim are
-queryable via ``tier_of`` and left for the reasoner to weigh.
+Convictions: ``Conviction(holder, claim)`` is a different category
+from the tiers — a reading treated as given: a worldview premise, not
+a fact-shaped stance graded by evidence and modes.  It is the home
+for interpretations of another's interior, whose truth is not
+establishable even in principle inside the holder's graph, and for
+beliefs held the way a flat world or a true religion is held — the
+holder does not hold the *text* of such a claim so much as the
+meaning behind it.  A conviction has no acquisition modes and is
+never revised by evidence the way a tier is; it changes by erosion,
+crisis, and conversion, all of them recorded.
+
+A conviction carries CERTAINTY, a 0-100 dial kept as a running total
+of dated, cause-named records Transition-chained off the canonical
+Conviction atom — never a bare value that could be rewritten at will
+and leave no trace of how the holder got there.  Confirming evidence
+raises certainty and counter-evidence lowers it, the way evidence
+works on anything else; every change must name its causing atom (a
+fact, a saying, a scene), and the module enforces the records and
+the arithmetic while the caller judges the delta.  While certainty
+is above zero the conviction cannot be negated: asserting or
+promoting an opposed conviction — one whose claim ``Contradicts``
+the held claim — is refused, and the opposed claim waits at Believes
+or Suspects with its Contradicts link in place.  At zero the
+conviction is relinquished, not refuted: only then may it fall back
+to Believes or be displaced by a promoted counter-belief.  A
+conviction serves as a deduction premise at Believes strength —
+conclusions drawn from a worldview land at Believes, never higher.
+
+Deliberate omissions: certainty is represented only as Conviction's
+dial; the tiers themselves carry no degree (a claim is Believed or
+it is not), and this dial is not Core confidence metadata either.
+This module also does not record ``Contradicts`` atoms between
+tiers; tier conflicts on one claim are queryable via ``tier_of``
+and left for the reasoner to weigh.
 
 Model error flags: ``ModelError(claim)`` is a unary provenance flag
 over a claim atom.  It asserts that the claim's *content* is an
@@ -87,10 +116,11 @@ from __future__ import annotations
 from typing import Dict, Iterable, List, Optional, Tuple
 from weakref import WeakKeyDictionary
 
-from ...atoms import AtomId, Predicate
+from ...atoms import AtomId, Ligature, Node, Predicate
 from ...facade import AtomSpaceAPI
 from ...infrastructure import InvalidAtomOperationError, UnknownAtomError
 from ...rules.generic import RuleSet
+from ..logic import install as install_logic
 from ..speech import install as install_speech
 
 
@@ -98,6 +128,7 @@ _EPISTEMIC_SPECS = {
     "Believes": ("holder", "claim"),
     "Suspects": ("holder", "claim"),
     "Knows": ("holder", "claim"),
+    "Conviction": ("holder", "claim"),
     "EvidenceFor": ("claim", "ground"),
 }
 
@@ -136,6 +167,16 @@ class EpistemicPredicates:
         self.ModelError = api.predicate("ModelError", arity=1, roles=("claim",))
         self.predicates["ModelError"] = self.ModelError
         self._names[self.ModelError] = "ModelError"
+
+        # Conviction machinery: the logic module owns Contradicts,
+        # which is how an opposed claim is recognized; certainty
+        # records are nodes, their values and dates shared join
+        # points (the date kind is the same atom the consent module
+        # uses — kinds are named once, graph-wide).
+        self.logic = install_logic(api)
+        self.certainty_record_kind = api.kind("CertaintyRecord")
+        self.certainty_value_kind = api.kind("CertaintyValue")
+        self.date_kind = api.kind("Date")
 
         self.rules = RuleSet(api)
 
@@ -212,6 +253,12 @@ class EpistemicPredicates:
                                 "arguments")
             return self.evidence_for(holder, claim, label=label,
                                      confidence=confidence)
+        if name == "Conviction":
+            raise TypeError(
+                "Conviction is asserted via convict() or promote(), "
+                "so the assertion carries its genesis certainty "
+                "record; relate() refuses it"
+            )
 
         evidence = tuple(evidence)
         premises = tuple(premises)
@@ -307,14 +354,28 @@ class EpistemicPredicates:
                     raise TypeError("via='deduced' takes no teacher, "
                                     "sources, scene, or declaration")
                 weakest: Optional[int] = None
+                premise_grounds: List[AtomId] = []
                 for premise in premises:
-                    tier = self._asserted_tier(holder, premise)
-                    if tier is None:
-                        raise TypeError(
-                            "via='deduced': premise is not held by the "
-                            "holder at any tier"
-                        )
-                    rank = _RANK[tier]
+                    conviction_claim = self._conviction_claim_of(
+                        holder, premise)
+                    if conviction_claim is not None:
+                        # A Conviction atom itself may serve as a
+                        # premise, at Believes strength: conclusions
+                        # drawn from a worldview land at Believes,
+                        # never higher.  The ground recorded is the
+                        # conviction's claim — the proposition doing
+                        # the work.
+                        rank = _RANK["Believes"]
+                        premise_grounds.append(conviction_claim)
+                    else:
+                        tier = self._asserted_tier(holder, premise)
+                        if tier is None:
+                            raise TypeError(
+                                "via='deduced': premise is not held "
+                                "by the holder at any tier"
+                            )
+                        rank = _RANK[tier]
+                        premise_grounds.append(premise)
                     weakest = rank if weakest is None else min(weakest, rank)
                 if weakest is not None and _RANK[name] > weakest:
                     raise TypeError(
@@ -326,8 +387,8 @@ class EpistemicPredicates:
                 # a discovery scene is: they ground the conclusion,
                 # so a Knows conclusion from Known premises needs no
                 # separate evidence= restating them.
-                grounds.extend(premises)
-                believed_grounds.extend(premises)
+                grounds.extend(premise_grounds)
+                believed_grounds.extend(premise_grounds)
         else:
             if teacher is not None or scene is not None \
                     or declaration is not None or premises or sources:
@@ -457,6 +518,340 @@ class EpistemicPredicates:
     def holds(self, holder: AtomId, claim: AtomId) -> bool:
         """Whether the holder holds the claim at any tier."""
         return self._asserted_tier(holder, claim) is not None
+
+    # -- convictions -----------------------------------------------------------
+
+    def _ligature_targets(self, atom_id: AtomId, name: str) -> List[AtomId]:
+        found: List[AtomId] = []
+        for ligature_id in self.api.in_ligatures(atom_id):
+            ligature = self.api.get(ligature_id)
+            if isinstance(ligature, Ligature) \
+                    and ligature.name == name \
+                    and len(ligature.args) == 2 \
+                    and ligature.args[0] == atom_id:
+                found.append(ligature.args[1])
+        return found
+
+    def _one_hanger(self, atom_id: AtomId, name: str) -> Optional[AtomId]:
+        targets = self._ligature_targets(atom_id, name)
+        return targets[0] if targets else None
+
+    def _shared_node(self, label: str, kind: AtomId) -> AtomId:
+        """A node shared by label and kind — values and dates are
+        join points, the way consent's dates are."""
+        for atom_id in self.api.find_by_label(label):
+            atom = self.api.get(atom_id)
+            if isinstance(atom, Node) and atom.kind == kind:
+                return atom_id
+        return self.api.create_node(label, kind=kind)
+
+    def _conviction_atom(self, holder: AtomId,
+                         claim: AtomId) -> Optional[AtomId]:
+        for result in self.api.search(predicate=self.Conviction):
+            atom = result.atom
+            if isinstance(atom, Predicate) and atom.args == (holder, claim):
+                return result.atom.id
+        return None
+
+    def conviction_of(self, holder: AtomId, claim: AtomId) -> Optional[AtomId]:
+        """The ``Conviction`` atom for (holder, claim), if asserted —
+        whether currently held or relinquished."""
+        return self._conviction_atom(holder, claim)
+
+    def is_conviction(self, atom_id: AtomId) -> bool:
+        """Whether ``atom_id`` is a ``Conviction`` assertion."""
+        atom = self.api.get(atom_id)
+        return isinstance(atom, Predicate) and atom.predicate == self.Conviction
+
+    def _conviction_claim_of(self, holder: AtomId,
+                             atom_id: AtomId) -> Optional[AtomId]:
+        """If ``atom_id`` is a Conviction assertion by ``holder``,
+        its claim; otherwise ``None``."""
+        atom = self.api.get(atom_id)
+        if isinstance(atom, Predicate) \
+                and atom.predicate == self.Conviction \
+                and atom.args and atom.args[0] == holder:
+            return atom.args[1]
+        return None
+
+    @staticmethod
+    def _check_certainty(value: object, *, genesis: bool) -> int:
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise TypeError("certainty must be an integer 0-100")
+        low = 1 if genesis else 0
+        if not low <= value <= 100:
+            raise TypeError(
+                f"certainty must be between {low} and 100, got {value}")
+        return value
+
+    def _new_certainty_record(self, conviction_atom: AtomId, *,
+                              value: int, cause: AtomId,
+                              on: Optional[str],
+                              previous: Optional[AtomId]) -> AtomId:
+        record = self.api.create_node(
+            f"certainty {value}", kind=self.certainty_record_kind)
+        self.api.create_ligature("Certainty", conviction_atom, record)
+        self.api.create_ligature(
+            "Value", record,
+            self._shared_node(str(value), self.certainty_value_kind))
+        self.api.create_ligature("Cause", record, cause)
+        if on is not None:
+            self.api.create_ligature(
+                "StatedOn", record, self._shared_node(on, self.date_kind))
+        if previous is not None:
+            self.api.transition(previous, record)
+        return record
+
+    def _records_of(self, conviction_atom: AtomId) -> List[AtomId]:
+        """The conviction's certainty records, genesis first, by
+        walking the Transition chain — the running total's history."""
+        records = self._ligature_targets(conviction_atom, "Certainty")
+        if not records:
+            return []
+        record_set = set(records)
+        successors: Dict[AtomId, AtomId] = {}
+        has_predecessor = set()
+        for record in records:
+            for transition_id in self.api.in_transitions(record):
+                source, target = self.api.transition_args(transition_id)
+                if source in record_set and target in record_set:
+                    successors[source] = target
+                    has_predecessor.add(target)
+        genesis = [r for r in records if r not in has_predecessor]
+        if len(genesis) != 1:
+            raise InvalidAtomOperationError(
+                "certainty chain is broken: expected exactly one "
+                "genesis record"
+            )
+        ordered: List[AtomId] = []
+        current: Optional[AtomId] = genesis[0]
+        while current is not None:
+            ordered.append(current)
+            current = successors.get(current)
+        if len(ordered) != len(records):
+            raise InvalidAtomOperationError(
+                "certainty chain does not reach every record")
+        return ordered
+
+    def _record_value(self, record: AtomId) -> int:
+        target = self._one_hanger(record, "Value")
+        if target is None:
+            raise InvalidAtomOperationError(
+                "certainty record carries no Value hanger")
+        return int(self.api.get(target).label)
+
+    def _certainty_tail(self, conviction_atom: AtomId) -> Optional[int]:
+        records = self._records_of(conviction_atom)
+        if not records:
+            return None
+        return self._record_value(records[-1])
+
+    def certainty_of(self, holder: AtomId, claim: AtomId) -> Optional[int]:
+        """Current certainty of the (holder, claim) conviction: the
+        tail of its record chain.  ``None`` if no conviction exists;
+        0 means relinquished."""
+        atom = self._conviction_atom(holder, claim)
+        if atom is None:
+            return None
+        return self._certainty_tail(atom)
+
+    def certainty_history(
+        self, holder: AtomId, claim: AtomId
+    ) -> List[Tuple[int, AtomId, Optional[str]]]:
+        """The conviction's certainty walk, oldest first: each
+        record's (value, causing atom, date label or ``None``) — how
+        the holder's certainty moved, and what moved it."""
+        atom = self._conviction_atom(holder, claim)
+        if atom is None:
+            return []
+        history: List[Tuple[int, AtomId, Optional[str]]] = []
+        for record in self._records_of(atom):
+            cause = self._one_hanger(record, "Cause")
+            date = self._one_hanger(record, "StatedOn")
+            history.append((
+                self._record_value(record),
+                cause,
+                self.api.get(date).label if date is not None else None,
+            ))
+        return history
+
+    def negation_locked(self, holder: AtomId, claim: AtomId) -> bool:
+        """Whether the (holder, claim) conviction currently stands
+        above zero certainty — while it does, it cannot be negated
+        and no opposed conviction may be asserted over it."""
+        certainty = self.certainty_of(holder, claim)
+        return certainty is not None and certainty > 0
+
+    def _check_opposed_lock(self, holder: AtomId, claim: AtomId) -> None:
+        for result in self.api.search(predicate=self.Conviction):
+            atom = result.atom
+            if not isinstance(atom, Predicate) \
+                    or atom.args[0] != holder or atom.args[1] == claim:
+                continue
+            other = atom.args[1]
+            opposed = self.api.has_predicate(
+                self.logic.Contradicts, claim, other) \
+                or self.api.has_predicate(
+                    self.logic.Contradicts, other, claim)
+            if opposed and (self._certainty_tail(result.atom.id) or 0) > 0:
+                raise InvalidAtomOperationError(
+                    "an opposed conviction stands above zero certainty; "
+                    "the new conviction is refused until the standing "
+                    "one is relinquished"
+                )
+
+    def convict(
+        self,
+        holder: AtomId,
+        claim: AtomId,
+        *,
+        certainty: int,
+        cause: AtomId,
+        on: Optional[str] = None,
+        label: Optional[str] = None,
+    ) -> AtomId:
+        """Assert ``Conviction(holder, claim)`` with its genesis
+        certainty record.  ``cause`` — the atom the conviction rests
+        on (a saying, a scene, a fact) — is required: a conviction
+        enters with its reason named, or not at all.
+
+        If the conviction exists but stands relinquished (certainty
+        0), this re-adopts it: a new record is chained onto the old
+        history rather than a second genesis written.  If it stands
+        above zero, assertion is refused — use ``adjust_certainty``.
+        """
+        certainty = self._check_certainty(certainty, genesis=True)
+        self._check_atom(holder, "holder")
+        self._check_atom(claim, "claim")
+        self._check_atom(cause, "cause")
+        if on is not None and (not isinstance(on, str) or not on):
+            raise TypeError("on must be a non-empty date label")
+        self._check_opposed_lock(holder, claim)
+        existing = self._conviction_atom(holder, claim)
+        if existing is not None:
+            records = self._records_of(existing)
+            if records:
+                if self._record_value(records[-1]) > 0:
+                    raise InvalidAtomOperationError(
+                        "conviction already stands above zero; use "
+                        "adjust_certainty to move it"
+                    )
+                self._new_certainty_record(
+                    existing, value=certainty, cause=cause, on=on,
+                    previous=records[-1])
+                return existing
+            self._new_certainty_record(
+                existing, value=certainty, cause=cause, on=on,
+                previous=None)
+            return existing
+        atom_id = self.rules.create_predicate(
+            self.Conviction, holder, claim, label=label)
+        self._new_certainty_record(
+            atom_id, value=certainty, cause=cause, on=on, previous=None)
+        return atom_id
+
+    def adjust_certainty(
+        self,
+        holder: AtomId,
+        claim: AtomId,
+        *,
+        cause: AtomId,
+        delta: Optional[int] = None,
+        to: Optional[int] = None,
+        on: Optional[str] = None,
+    ) -> AtomId:
+        """Move a standing conviction's certainty, recording the
+        change as a new chained record.  Exactly one of ``delta=``
+        (signed, judged by the caller from the causing evidence) or
+        ``to=`` (the new absolute value).  ``cause`` is required —
+        certainty never moves without a named reason — and the
+        result must stay within 0-100: the module enforces the
+        arithmetic, it does not silently clamp.  Returns the new
+        record.  A relinquished conviction (certainty 0) is not
+        adjusted; it is re-adopted via ``convict``.
+        """
+        if (delta is None) == (to is None):
+            raise TypeError("adjust_certainty takes exactly one of "
+                            "delta= or to=")
+        self._check_atom(cause, "cause")
+        if on is not None and (not isinstance(on, str) or not on):
+            raise TypeError("on must be a non-empty date label")
+        atom = self._conviction_atom(holder, claim)
+        if atom is None:
+            raise InvalidAtomOperationError(
+                "no conviction stands for this holder and claim")
+        records = self._records_of(atom)
+        if not records:
+            raise InvalidAtomOperationError(
+                "conviction carries no certainty records")
+        current = self._record_value(records[-1])
+        if current == 0:
+            raise InvalidAtomOperationError(
+                "conviction is relinquished; re-adopt it via convict() "
+                "rather than adjusting from zero"
+            )
+        if delta is not None:
+            if isinstance(delta, bool) or not isinstance(delta, int):
+                raise TypeError("delta must be an integer")
+            new_value = current + delta
+        else:
+            new_value = self._check_certainty(to, genesis=False)
+        if not 0 <= new_value <= 100:
+            raise TypeError(
+                f"certainty would leave 0-100: {current} -> {new_value}")
+        return self._new_certainty_record(
+            atom, value=new_value, cause=cause, on=on,
+            previous=records[-1])
+
+    def promote(
+        self,
+        holder: AtomId,
+        claim: AtomId,
+        *,
+        certainty: int,
+        cause: AtomId,
+        on: Optional[str] = None,
+    ) -> AtomId:
+        """Promote a Believed claim to a Conviction: the hardening of
+        a stance into a worldview premise, recorded as a Transition
+        from the Believes atom.  This is also the displacement
+        mechanism — a counter-belief may be promoted over an opposed
+        conviction only once that conviction stands relinquished."""
+        if self._asserted_tier(holder, claim) != "Believes":
+            raise InvalidAtomOperationError(
+                "promote expects the claim to stand at Believes")
+        if self._conviction_atom(holder, claim) is not None:
+            raise InvalidAtomOperationError(
+                "a conviction already exists for this holder and "
+                "claim; re-adopt a relinquished one via convict()")
+        believes_atom = None
+        for result in self.api.search(predicate=self.Believes):
+            atom = result.atom
+            if isinstance(atom, Predicate) and atom.args == (holder, claim):
+                believes_atom = result.atom.id
+        atom_id = self.convict(
+            holder, claim, certainty=certainty, cause=cause, on=on)
+        if believes_atom is not None:
+            self.api.transition(believes_atom, atom_id)
+        return atom_id
+
+    def fall_back(self, holder: AtomId, claim: AtomId) -> AtomId:
+        """A relinquished conviction falls back to Believes: the
+        claim stays accepted, stripped of its worldview standing,
+        with a Transition from the Conviction atom recording the
+        move.  Refused while certainty is above zero — a conviction
+        is eroded to relinquishment first, never dropped outright."""
+        atom = self._conviction_atom(holder, claim)
+        if atom is None:
+            raise InvalidAtomOperationError(
+                "no conviction stands for this holder and claim")
+        if (self._certainty_tail(atom) or 0) > 0:
+            raise InvalidAtomOperationError(
+                "conviction still stands above zero; it must be "
+                "relinquished before it can fall back")
+        believes_atom = self.relate(self.Believes, holder, claim)
+        self.api.transition(atom, believes_atom)
+        return believes_atom
 
     # -- model error flags ---------------------------------------------------
 

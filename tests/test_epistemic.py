@@ -39,7 +39,8 @@ class EpistemicTests(unittest.TestCase):
     def test_vocabulary_is_exact(self):
         self.assertEqual(
             set(self.epi.predicates),
-            {"Believes", "Suspects", "Knows", "EvidenceFor", "ModelError"},
+            {"Believes", "Suspects", "Knows", "EvidenceFor", "ModelError",
+             "Conviction"},
         )
 
     def test_install_is_idempotent(self):
