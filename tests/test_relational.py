@@ -218,5 +218,52 @@ class BodyStateAndSimultaneousTests(unittest.TestCase):
             len(self.api.predicates_of(self.rel.Simultaneous)), 0)
 
 
+class BodyStateKindGateTests(unittest.TestCase):
+    """AffixedTo / InsertedIn kind-gate their first argument: it
+    must be an Object node (subkinds of Object pass).  A refusal
+    writes nothing."""
+
+    def setUp(self):
+        self.api = AtomSpaceAPI.create()
+        self.rel = install(self.api)
+        person_kind = self.api.kind("Person")
+        self.elena = self.api.create_node("Elena", kind=person_kind)
+        self.robert = self.api.create_node("Robert", kind=person_kind)
+        self.vibe = self.api.create_node(
+            "vibe", kind=self.api.kind("Object"))
+
+    def test_affixed_to_refuses_person_first(self):
+        with self.assertRaises(TypeError):
+            self.rel.relate(self.rel.AffixedTo, self.elena, self.robert)
+        self.assertEqual(
+            len(self.api.predicates_of(self.rel.AffixedTo)), 0)
+
+    def test_inserted_in_refuses_person_first(self):
+        with self.assertRaises(TypeError):
+            self.rel.relate(
+                self.rel.InsertedIn, self.elena, self.robert)
+        self.assertEqual(
+            len(self.api.predicates_of(self.rel.InsertedIn)), 0)
+
+    def test_body_states_refuse_act_term_first(self):
+        from atomforge.stdagent.acts import install as install_acts
+        massage = install_acts(self.api).act_node("massage")
+        with self.assertRaises(TypeError):
+            self.rel.relate(self.rel.AffixedTo, massage, self.elena)
+        with self.assertRaises(TypeError):
+            self.rel.relate(self.rel.InsertedIn, massage, self.elena)
+
+    def test_object_subkind_passes(self):
+        toy_kind = self.api.kind("Toy")
+        self.rel.relate(self.rel.IsA, toy_kind, self.rel.object_kind)
+        plug = self.api.create_node("plug", kind=toy_kind)
+        self.rel.relate(self.rel.InsertedIn, plug, self.elena)
+        self.assertTrue(self.rel.has(
+            self.rel.InsertedIn, plug, self.elena))
+        self.rel.relate(self.rel.AffixedTo, self.vibe, self.elena)
+        self.assertTrue(self.rel.has(
+            self.rel.AffixedTo, self.vibe, self.elena))
+
+
 if __name__ == "__main__":
     unittest.main()

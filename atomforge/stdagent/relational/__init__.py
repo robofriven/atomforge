@@ -27,6 +27,14 @@ than anyone's doings:
   two ``Orgasms`` applications linked ``Simultaneous`` are a
   simultaneous orgasm; two events, a plan and a signal, any pair.
   Asserting it of an atom and itself is refused.
+
+The two body states kind-gate their first argument: it must be an
+``Object`` node.  The check is :meth:`kind_is_a`, so a node under a
+subkind of ``Object`` passes — the same IsA-aware discipline the
+rest of stdagent applies to its kinds.  The ``Object`` kind atom
+itself is registered by the actions module (home of
+``object_node``); this module resolves the same interned kind atom
+by name, as the acts module does for its own kinds.
 """
 
 from __future__ import annotations
@@ -80,6 +88,7 @@ class RelationalPredicates:
             predicate = api.predicate(name, arity=2, roles=roles)
             self.predicates[name] = predicate
             setattr(self, name, predicate)
+        self.object_kind = api.kind("Object")
 
         self.rules = RuleSet(api)
         self._install_rules()
@@ -126,6 +135,18 @@ class RelationalPredicates:
         if predicate == self.Simultaneous and left == right:
             raise TypeError(
                 "Simultaneous cannot relate an atom to itself"
+            )
+        if predicate == self.AffixedTo \
+                and not self.kind_is_a(left, self.object_kind):
+            raise TypeError(
+                "AffixedTo requires an Object node as its first "
+                "argument"
+            )
+        if predicate == self.InsertedIn \
+                and not self.kind_is_a(left, self.object_kind):
+            raise TypeError(
+                "InsertedIn requires an Object node as its first "
+                "argument"
             )
         return self.rules.create_predicate(
             predicate,
