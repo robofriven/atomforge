@@ -9,7 +9,7 @@ rest of the world — objects, and (for ``Gives``) another agent.
   you do not ``Does`` them (``Does(agent, object)`` does not exist —
   Elena didn't *do* claw machine).
 - ``Wears(agent, object)`` — the object is on the agent's body by its
-  own designed body-interface: rings, plugs, cage, collar, clothing.
+  own designed body-interface: rings, cage, collar, clothing.
   What is merely fastened on by something else's stickiness is not
   worn — that state is relational's ``AffixedTo``; what is inside
   the body is relational's ``InsertedIn``.  (Relational's older
@@ -40,9 +40,23 @@ A scene's activity is a composition across this family and ``acts``:
 its ``Does`` + ``Use`` + ``Wears`` + ``Play`` + ``Gives`` atoms.  No
 single label carries a whole scene.
 
-Depends on Core, acts (act-term checks for payloads), and possession
-(custody receipts).  Act payloads are exempt from custody: you
-cannot hold a massage.
+The kind these verbs range over is ``Object``, and this module is
+its registrar: :meth:`ActionVerbs.object_node` mints object atoms —
+label in, deduplicated ``Object`` node out, exactly the
+``feeling_node`` pattern from the feels module.  Minting is NOT
+vocabulary-gated: any thing may exist as an instance, because schema
+closure governs kinds and predicates, not instances.  Validation,
+by contrast, is kind-gated throughout, and IsA-aware (a node under
+a subkind of ``Object`` validates everywhere an object does):
+``Use`` / ``Wears`` / ``Play`` refuse a second argument that is not
+an Object node, and a ``Gives`` payload must be an Act term or an
+Object node.  Before this kind was registered, the payload check
+could only insist on *a* Node — a person was as acceptable a
+payload as a ring.
+
+Depends on Core, acts (act-term checks for payloads), relational
+(kind checks), and possession (custody receipts).  Act payloads are
+exempt from custody: you cannot hold a massage.
 """
 
 from __future__ import annotations
@@ -56,6 +70,7 @@ from ...infrastructure import InvalidAtomOperationError, UnknownAtomError
 from ...rules.generic import RuleSet
 from ..acts import install as install_acts
 from ..possession import install as install_possession
+from ..relational import install as install_relational
 
 
 _ACTION_SPECS = {
@@ -81,6 +96,8 @@ class ActionVerbs:
             raise TypeError("api must be an AtomSpaceAPI")
         self.api = api
         self.acts = install_acts(api)
+        self.relational = install_relational(api)
+        self.object_kind = api.kind("Object")
         self.predicates: Dict[str, AtomId] = {}
         for name, roles in _ACTION_SPECS.items():
             predicate = api.predicate(name, arity=2, roles=roles)
@@ -118,6 +135,16 @@ class ActionVerbs:
                 "cannot be a relationship argument"
             )
 
+    def _check_object(self, obj: AtomId, role: str = "object") -> None:
+        """Kind-gate one object argument: it must be an ``Object``
+        node — or a node under a subkind of Object (the check is
+        IsA-aware, as everywhere in stdagent)."""
+        if not self.relational.kind_is_a(obj, self.object_kind):
+            raise TypeError(
+                f"actions {role} must be an Object node; mint one "
+                "with object_node()"
+            )
+
     def _simple(
         self,
         predicate: AtomId,
@@ -129,9 +156,33 @@ class ActionVerbs:
     ) -> AtomId:
         self._check_atom(agent, "agent")
         self._check_atom(obj, "object")
+        self._check_object(obj)
         return self.rules.create_predicate(
             predicate, agent, obj, label=label, confidence=confidence
         )
+
+    # -- object atoms ----------------------------------------------------------
+
+    def object_node(self, label: str) -> AtomId:
+        """Return the object atom for a label, minting it if new.
+
+        The same label always resolves to the same ``Object`` node.
+        The label is used exactly as given and is never normalized.
+        Unlike ``act_node``, minting is not vocabulary-gated: objects
+        are instances, and any thing may exist — schema closure
+        governs kinds and predicates, not instances.
+        """
+        if not isinstance(label, str) or not label:
+            raise TypeError("object label must be a non-empty string")
+        for atom_id in self.api.find_by_label(label):
+            if self.relational.kind_is_a(atom_id, self.object_kind):
+                return atom_id
+        return self.api.create_node(label, kind=self.object_kind)
+
+    def is_object(self, atom_id: AtomId) -> bool:
+        """Return whether ``atom_id`` is a live ``Object`` node — or
+        a node under a subkind of Object in the IsA hierarchy."""
+        return self.relational.kind_is_a(atom_id, self.object_kind)
 
     # -- object verbs ----------------------------------------------------------
 
@@ -173,7 +224,9 @@ class ActionVerbs:
         given — the ring).  It rides on the application atom as a
         ``Payload`` ligature.  Self-giving is refused, as is any
         payload that is not a Node (a category or an assertion is
-        not something that can be given).
+        not something that can be given), and any Node that is
+        neither an Act term nor an Object — a person is not a
+        payload.
         """
         if giver == recipient:
             raise TypeError("Gives cannot relate an agent to itself")
@@ -183,6 +236,12 @@ class ActionVerbs:
         if not isinstance(self.api.get(payload), Node):
             raise TypeError(
                 "Gives payload must be a Node: an Act term or an Object"
+            )
+        if not self.acts.is_act(payload) \
+                and not self.is_object(payload):
+            raise TypeError(
+                "Gives payload must be an Act term or an Object node; "
+                "mint objects with object_node()"
             )
         application = self.rules.create_predicate(
             self.Gives, giver, recipient,
@@ -229,6 +288,10 @@ class ActionVerbs:
             raise TypeError(
                 "an act payload has no custody; custody receipts are "
                 "for object payloads"
+            )
+        if not self.is_object(payload):
+            raise TypeError(
+                "custody receipts are for Object payloads"
             )
         recipient = application.args[1]
         possession = install_possession(self.api)

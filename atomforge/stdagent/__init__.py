@@ -34,7 +34,9 @@ Presuppositions, per module:
 - ``actions`` — presupposes agents with objects and each other: the
   verb family partitions by its second argument — ``Use`` / ``Wears``
   / ``Play`` take objects; ``Gives`` takes a recipient agent and
-  requires a payload (an act term or an object) on the frame.
+  requires a payload (an act term or an object) on the frame.  It
+  also registers the ``Object`` kind and its ``object_node`` factory
+  (instances ungated; the verbs' object slots kind-gated).
 
 Dependency rule: stdagent modules may depend on Core and on stdagent
 modules below them (``preferences`` on ``logic``, ``epistemic`` on
