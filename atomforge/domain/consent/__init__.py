@@ -42,6 +42,20 @@ by Transition (grant record → revocation record → re-grant record),
 so consent state at any point in the timeline reads correctly and the
 whole history stays walkable.  Nothing is ever deleted or edited.
 
+Renaming restatements are a distinct record type, not a re-grant:
+when a category is coined mid-stream, the naming scene mints a
+restatement record Transition-chained to the original record,
+carrying the new term — "the thing we granted back then, we now call
+secret play."  The restatement is a genuine grant statement on the
+new term (see :meth:`ConsentPredicates.restate_grant`): it inherits
+the original's recipient, window, and exclusions, so
+:meth:`consent_state` on the new term reads ``"granted"`` from the
+naming scene onward and ``"none"`` before it — the name did not exist
+yet, and that honest blank is not a failure.  No past atom is
+rewritten, the original grant's state is unchanged, and a restatement
+never revokes: its predecessor is a grant record, never a revocation
+record, and no ``ConsentRevoked`` atom is written.
+
 Every grant statement carries its provenance as required data
 ("hangers"), enforced at write time — a grant missing any of them is
 refused before anything is written:
@@ -655,6 +669,102 @@ class ConsentPredicates:
         self.epistemic.evidence_for(atom_id, statement)
         self.epistemic.evidence_for(record, statement)
         self.api.transition(governing, record)
+        return atom_id
+
+    # -- renaming restatement ------------------------------------------------
+
+    def restate_grant(
+        self,
+        holder: AtomId,
+        old_act: AtomId,
+        new_act: AtomId,
+        *,
+        statement: AtomId,
+        stated_on: str,
+        note: Optional[str] = None,
+        label: Optional[str] = None,
+        confidence: float = 1.0,
+    ) -> AtomId:
+        """Restate a standing grant under a term coined mid-stream,
+        and return the canonical ``ConsentGranted`` atom on the new
+        term.
+
+        The naming scene mints a restatement record Transition-chained
+        to the original (governing) record, carrying the new term:
+        "the thing we granted back then, we now call this."  The
+        restatement inherits the original's recipient, window
+        (``active_from`` / ``expires``), and exclusions, and is
+        marked with mode ``"restated"`` plus a ``Restates`` ligature
+        to the original record.  No past atom is rewritten and the
+        original grant's state is unchanged.
+
+        This is DISTINCT from a revoke-restate: its predecessor is a
+        grant record, never a revocation record, and no
+        ``ConsentRevoked`` atom is written.  It also never resurrects
+        a revoked or expired grant: the original must be standing at
+        the naming date, or the restatement is refused.
+
+        Because the restatement is a genuine grant statement on the
+        new term, :meth:`consent_state` needs no special case: on the
+        new term it reads ``"none"`` before the naming scene (the
+        name did not exist yet) and the grant's state from the naming
+        scene onward.  The recipient is inherited, never re-decided,
+        so there is no ``to`` argument.
+        """
+        if old_act == new_act:
+            raise TypeError(
+                "a restatement must rename: new term is the same "
+                "act as the original"
+            )
+        self._check_atom(holder, "holder")
+        self._check_act(old_act)
+        self._check_act(new_act)
+        self._check_statement(statement, holder, "declared")
+        stated_key = wxdy_key(stated_on)
+        self._validate_note(note)
+
+        governing = self._governing_record(holder, old_act, stated_key)
+        if governing is None:
+            raise InvalidAtomOperationError(
+                "nothing standing to restate: no grant covers this "
+                "holder and act at that date"
+            )
+        original = self.hangers_of(governing)
+        recipient = original["to"]
+        if recipient is None:
+            raise InvalidAtomOperationError(
+                "governing record names no recipient: cannot restate "
+                "an unaddressed grant"
+            )
+        active_from = original["active_from"] or original["stated_on"]
+        expires = original["expires"]
+        if active_from is None or expires is None:
+            raise InvalidAtomOperationError(
+                "governing record names no window: cannot restate "
+                "a grant without one"
+            )
+
+        atom_id = self.rules.create_predicate(
+            self.ConsentGranted, holder, new_act,
+            label=None, confidence=confidence,
+        )
+        record = self._new_record(label)
+        self._hang(atom_id, "Statement", record)
+        self._hang(record, "GrantedTo", recipient)
+        self._hang(record, "StatedIn", statement)
+        self._hang(record, "StatedOn", self.date_node(stated_on))
+        self._hang(record, "ActiveFrom", self.date_node(active_from))
+        self._hang(record, "ExpiresOn", self.date_node(expires))
+        self._hang(record, "Mode", self._mode_node("restated"))
+        self._hang(record, "Restates", governing)
+        for excluded in original["excludes"]:
+            self._hang(record, "Excludes", excluded)
+        if note is not None:
+            self._hang(record, "Note", self.speech.claim_node(note))
+        self.epistemic.evidence_for(atom_id, statement)
+        self.epistemic.evidence_for(record, statement)
+        self.api.transition(governing, record)
+        self._record_conflicts(atom_id, "ConsentGranted", holder, new_act)
         return atom_id
 
     # -- queries ---------------------------------------------------------------

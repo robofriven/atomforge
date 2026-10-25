@@ -355,5 +355,159 @@ class ConsentTests(unittest.TestCase):
                 self.consent.ConsentRevoked, self.elena, self.hug)
 
 
+class RestatementTests(unittest.TestCase):
+    """Renaming restatements: a category coined mid-stream.
+
+    The naming scene mints a restatement record Transition-chained
+    to the original record, carrying the new term — "the thing we
+    granted back then, we now call this."  Distinct from a
+    revoke-restate: the predecessor is a grant record, no revocation
+    is written, and the original grant's state is unchanged.
+    """
+
+    def setUp(self):
+        self.api = AtomSpaceAPI.create()
+        self.kind = self.api.kind("Person")
+        self.robert = self.api.create_node("Robert", kind=self.kind)
+        self.elena = self.api.create_node("Elena", kind=self.kind)
+        self.acts = install_acts(
+            self.api, vocabulary=FIXTURE_VOCABULARY)
+        self.consent = install(self.api, owner=self.robert)
+        self.speech = install_speech(self.api)
+        self.old_act = self.acts.act_node("plain act")
+        self.new_act = self.acts.act_node("surprise hugs")
+
+    def say(self, speaker, text):
+        return self.speech.say(speaker, text)
+
+    def grant_old(self, **overrides):
+        kwargs = dict(
+            statement=self.say(self.elena, "plain acts are fine"),
+            stated_on="W1D1",
+            expires=NEVER_EXPIRES,
+        )
+        kwargs.update(overrides)
+        return self.consent.grant(self.elena, self.old_act, **kwargs)
+
+    def restate(self, **overrides):
+        kwargs = dict(
+            statement=self.say(
+                self.elena, "the thing we granted back then, "
+                "we now call surprise hugs"),
+            stated_on="W1D4",
+        )
+        kwargs.update(overrides)
+        return self.consent.restate_grant(
+            self.elena, self.old_act, self.new_act, **kwargs)
+
+    def restates_targets(self, record):
+        found = []
+        for ligature_id in self.api.in_ligatures(record):
+            ligature = self.api.get(ligature_id)
+            if ligature.name == "Restates" \
+                    and len(ligature.args) == 2 \
+                    and ligature.args[0] == record:
+                found.append(ligature.args[1])
+        return found
+
+    def test_restatement_chains_to_original_and_carries_new_term(self):
+        grant = self.grant_old()
+        original_record = self.consent.records_of(grant)[-1]
+        restated = self.restate()
+        # The new atom is a genuine grant on the new term.
+        self.assertEqual(self.api.get(restated).args[1], self.new_act)
+        restatement_record = self.consent.records_of(restated)[-1]
+        # (1) Transition-chained to the original record.
+        incoming = self.api.in_transitions(restatement_record)
+        befores = {self.api.transition_args(t)[0] for t in incoming}
+        self.assertIn(original_record, befores)
+        # (2) Carries the new term, marked restated, pointing back.
+        hangers = self.consent.hangers_of(restated)
+        self.assertEqual(hangers["mode"], "restated")
+        self.assertEqual(hangers["stated_on"], "W1D4")
+        self.assertEqual(
+            self.restates_targets(restatement_record),
+            [original_record])
+
+    def test_consent_state_resolves_through_the_chain(self):
+        self.grant_old()
+        self.restate()
+        # (3) Granted at and after the naming scene.
+        self.assertEqual(
+            self.consent.consent_state(self.elena, self.new_act, "W1D4"),
+            "granted")
+        self.assertEqual(
+            self.consent.consent_state(self.elena, self.new_act, "W2D1"),
+            "granted")
+        # (4) None before the naming scene: the name did not exist yet.
+        self.assertEqual(
+            self.consent.consent_state(self.elena, self.new_act, "W1D3"),
+            "none")
+
+    def test_original_grant_state_unchanged(self):
+        grant = self.grant_old()
+        restated = self.restate()
+        # (5) The original term still resolves, its records untouched.
+        self.assertEqual(
+            self.consent.consent_state(self.elena, self.old_act, "W1D4"),
+            "granted")
+        self.assertEqual(len(self.consent.records_of(grant)), 1)
+        # The window and recipient were inherited, not re-decided.
+        restated_hangers = self.consent.hangers_of(restated)
+        self.assertEqual(restated_hangers["to"], self.robert)
+        self.assertEqual(restated_hangers["expires"], NEVER_EXPIRES)
+
+    def test_restatement_is_not_a_revocation(self):
+        self.grant_old()
+        restated = self.restate()
+        # (6) No revocation atom exists, nothing reads revoked, and
+        # the chain predecessor is a grant record, not a revocation.
+        self.assertEqual(self.consent.revocations_of(self.elena), [])
+        self.assertNotEqual(
+            self.consent.consent_state(self.elena, self.old_act, "W1D4"),
+            "revoked")
+        self.assertNotEqual(
+            self.consent.consent_state(self.elena, self.new_act, "W1D4"),
+            "revoked")
+        restatement_record = self.consent.records_of(restated)[-1]
+        befores = {
+            self.api.transition_args(t)[0]
+            for t in self.api.in_transitions(restatement_record)
+        }
+        grant_records = set()
+        for atom_id in self.consent.grants_of(self.elena):
+            grant_records.update(self.consent.records_of(atom_id))
+        self.assertTrue(befores & grant_records)
+        revocation_records = set()
+        for atom_id in self.consent.revocations_of(self.elena):
+            revocation_records.update(self.consent.records_of(atom_id))
+        self.assertFalse(befores & revocation_records)
+
+    def test_restatement_requires_a_standing_grant(self):
+        with self.assertRaises(InvalidAtomOperationError):
+            self.restate()
+        # Revoked grants cannot be resurrected by renaming.
+        self.grant_old()
+        self.consent.revoke(
+            self.elena, self.old_act,
+            statement=self.say(self.elena, "Red."),
+            stated_on="W1D2")
+        with self.assertRaises(InvalidAtomOperationError):
+            self.restate()
+
+    def test_restatement_must_rename_and_be_spoken_by_holder(self):
+        self.grant_old()
+        with self.assertRaises(TypeError):
+            self.consent.restate_grant(
+                self.elena, self.old_act, self.old_act,
+                statement=self.say(self.elena, "same name"),
+                stated_on="W1D4")
+        with self.assertRaises(TypeError):
+            self.consent.restate_grant(
+                self.elena, self.old_act, self.new_act,
+                statement=self.say(self.robert, "she renamed it"),
+                stated_on="W1D4")
+
+
 if __name__ == "__main__":
     unittest.main()

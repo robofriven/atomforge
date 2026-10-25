@@ -14,4 +14,8 @@ world simply never installs that domain's vocabulary.
 - ``consent`` — presupposes agents with boundaries, over act types
   from ``stdagent.acts``: who has consented to what, what is
   permitted, and what is a hard limit.
+- ``sex`` — presupposes agents with bodies: the sex response
+  predicates (``EjaculatesOn``/``In``, ``SquirtsOn``/``In``,
+  unary ``Orgasms``) and the ``SexAct`` kind, whose taxonomy joins
+  the act hierarchy by kind inheritance.
 """

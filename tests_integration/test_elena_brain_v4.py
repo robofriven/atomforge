@@ -27,6 +27,7 @@ from atomforge.stdagent.preferences import install as install_prefs
 from atomforge.stdagent.relational import install as install_relational
 from atomforge.stdagent.speech import install as install_speech
 from atomforge.domain.consent import install as install_consent
+from atomforge.domain.sex import install as install_sex
 
 BRAIN_PATH = (
     Path.home() / "workspace" / "goals"
@@ -55,6 +56,7 @@ class ElenaBrainV4Tests(unittest.TestCase):
         cls.pf = install_prefs(cls.api)
         cls.co = install_consent(cls.api)
         cls.acts = install_acts(cls.api)
+        cls.sex = install_sex(cls.api)
         cls.actions = install_actions(cls.api)
         cls.feels = install_feels(cls.api)
         cls.rel = install_relational(cls.api)
@@ -286,10 +288,10 @@ class ElenaBrainV4Tests(unittest.TestCase):
             self.actions.Wears, self.robert, cage))
 
     def test_simultaneous_orgasm_is_two_atoms_and_a_link(self):
-        self.assertTrue(self.acts.has_orgasm(self.elena))
-        self.assertTrue(self.acts.has_orgasm(self.robert))
-        oe = self.predicates_with(self.acts.Orgasms, self.elena)[0]
-        orr = self.predicates_with(self.acts.Orgasms, self.robert)[0]
+        self.assertTrue(self.sex.has_orgasm(self.elena))
+        self.assertTrue(self.sex.has_orgasm(self.robert))
+        oe = self.predicates_with(self.sex.Orgasms, self.elena)[0]
+        orr = self.predicates_with(self.sex.Orgasms, self.robert)[0]
         self.assertTrue(self.rel.has(self.rel.Simultaneous, oe.id, orr.id))
 
     # -- consent (untouched layer) -----------------------------------------
