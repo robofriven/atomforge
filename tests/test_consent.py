@@ -509,5 +509,130 @@ class RestatementTests(unittest.TestCase):
                 stated_on="W1D4")
 
 
+class RevokePropagationTests(unittest.TestCase):
+    """Lineage-scoped revoke propagation (ruled 2026-10-25).
+
+    Revoking any name in a restatement lineage revokes all names in
+    that lineage — read-time only, no extra records written. But a
+    label that later heads a new lineage (a fresh re-grant of the old
+    name after the rename) is a different permission: revoking it
+    leaves the old lineage untouched.
+    """
+
+    def setUp(self):
+        self.api = AtomSpaceAPI.create()
+        self.kind = self.api.kind("Person")
+        self.robert = self.api.create_node("Robert", kind=self.kind)
+        self.elena = self.api.create_node("Elena", kind=self.kind)
+        self.acts = install_acts(
+            self.api, vocabulary=FIXTURE_VOCABULARY)
+        self.consent = install(self.api, owner=self.robert)
+        self.speech = install_speech(self.api)
+        self.old_act = self.acts.act_node("plain act")
+        self.new_act = self.acts.act_node("surprise hugs")
+        self.third_act = self.acts.act_node("hug")
+
+    def say(self, speaker, text):
+        return self.speech.say(speaker, text)
+
+    def grant_old(self, **overrides):
+        kwargs = dict(
+            statement=self.say(self.elena, "plain acts are fine"),
+            stated_on="W1D1",
+            expires=NEVER_EXPIRES,
+        )
+        kwargs.update(overrides)
+        return self.consent.grant(self.elena, self.old_act, **kwargs)
+
+    def restate(self, **overrides):
+        kwargs = dict(
+            statement=self.say(
+                self.elena, "the thing we granted back then, "
+                "we now call surprise hugs"),
+            stated_on="W1D4",
+        )
+        kwargs.update(overrides)
+        return self.consent.restate_grant(
+            self.elena, self.old_act, self.new_act, **kwargs)
+
+    def revoke(self, act, date, text="Red."):
+        return self.consent.revoke(
+            self.elena, act,
+            statement=self.say(self.elena, text),
+            stated_on=date)
+
+    def state(self, act, date):
+        return self.consent.consent_state(self.elena, act, date)
+
+    def test_revoke_old_propagates_to_restated_term(self):
+        self.grant_old()
+        self.restate()
+        self.revoke(self.old_act, "W1D5")
+        self.assertEqual(self.state(self.new_act, "W1D4"), "granted")
+        self.assertEqual(self.state(self.new_act, "W1D6"), "revoked")
+        self.assertEqual(self.state(self.old_act, "W1D6"), "revoked")
+
+    def test_revoke_new_propagates_back_to_original(self):
+        self.grant_old()
+        self.restate()
+        self.revoke(self.new_act, "W1D5")
+        self.assertEqual(self.state(self.old_act, "W1D6"), "revoked")
+        self.assertEqual(self.state(self.new_act, "W1D6"), "revoked")
+
+    def test_label_reuse_revoke_hits_new_lineage_only(self):
+        self.grant_old()
+        self.restate()
+        # A fresh re-grant of the old name heads a NEW lineage.
+        self.consent.grant(
+            self.elena, self.old_act,
+            statement=self.say(self.elena, "plain acts are fine, again"),
+            stated_on="W1D6",
+            expires=NEVER_EXPIRES)
+        self.assertEqual(self.state(self.new_act, "W1D6"), "granted")
+        self.revoke(self.old_act, "W1D7")
+        self.assertEqual(self.state(self.old_act, "W1D8"), "revoked")
+        self.assertEqual(self.state(self.new_act, "W1D8"), "granted")
+
+    def test_transitive_propagation_across_two_restatements(self):
+        self.grant_old()
+        self.restate()
+        self.consent.restate_grant(
+            self.elena, self.new_act, self.third_act,
+            statement=self.say(
+                self.elena, "surprise hugs, we now call hugs"),
+            stated_on="W1D5")
+        self.assertEqual(self.state(self.third_act, "W1D4"), "none")
+        self.assertEqual(self.state(self.third_act, "W1D5"), "granted")
+        self.revoke(self.old_act, "W1D6")
+        self.assertEqual(self.state(self.third_act, "W1D7"), "revoked")
+        self.assertEqual(self.state(self.new_act, "W1D7"), "revoked")
+        self.assertEqual(self.state(self.old_act, "W1D7"), "revoked")
+
+    def test_regrant_after_revoke_revives_lineage(self):
+        self.grant_old()
+        self.restate()
+        self.revoke(self.old_act, "W1D5")
+        self.assertEqual(self.state(self.old_act, "W1D6"), "revoked")
+        self.assertEqual(self.state(self.new_act, "W1D6"), "revoked")
+        self.consent.grant(
+            self.elena, self.old_act,
+            statement=self.say(self.elena, "plain acts are fine, again"),
+            stated_on="W1D7",
+            expires=NEVER_EXPIRES)
+        self.assertEqual(self.state(self.old_act, "W1D8"), "granted")
+        self.assertEqual(self.state(self.new_act, "W1D8"), "granted")
+
+    def test_revoke_writes_a_single_record(self):
+        self.grant_old()
+        self.restate()
+        self.revoke(self.old_act, "W1D5")
+        # Propagation is read-time: no duplicate revocation records
+        # are written across the lineage.
+        revocations = self.consent.revocations_of(self.elena)
+        self.assertEqual(len(revocations), 1)
+        self.assertEqual(
+            len(self.consent.records_of(revocations[0])), 1)
+
+
 if __name__ == "__main__":
     unittest.main()

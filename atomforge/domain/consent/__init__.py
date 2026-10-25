@@ -54,7 +54,11 @@ naming scene onward and ``"none"`` before it — the name did not exist
 yet, and that honest blank is not a failure.  No past atom is
 rewritten, the original grant's state is unchanged, and a restatement
 never revokes: its predecessor is a grant record, never a revocation
-record, and no ``ConsentRevoked`` atom is written.
+record, and no ``ConsentRevoked`` atom is written.  Revocation is
+lineage-scoped at read time: revoking any name in a restatement
+lineage revokes all names in that lineage, while revoking a label
+that later heads a new lineage leaves the old lineage untouched
+(see ``_lineage_events``); the write paths write nothing extra.
 
 Every grant statement carries its provenance as required data
 ("hangers"), enforced at write time — a grant missing any of them is
@@ -861,6 +865,120 @@ class ConsentPredicates:
                 standing = None
         return standing
 
+    def _lineage_events(
+        self, holder: AtomId, act: AtomId
+    ) -> List[Tuple[Tuple[int, int], int, str, AtomId, Dict[str, object]]]:
+        """The queried act's timeline merged with lineage-shared events.
+
+        A restatement lineage is the transitive closure, both
+        directions, of the ``Restates`` ligatures hanging off the
+        queried act's records: backward to the original records, and
+        forward to restatement records that restate a lineage record.
+        Only ``Restates`` links define the lineage — Transition edges
+        are never traversed, so a grant→revoke→re-grant chain on one
+        act (a fresh re-grant heading a new lineage) never merges
+        into the restatement lineage.
+
+        Events on other lineage acts join the timeline only when
+        dated at or after the date the two acts became linked (the
+        later of their joining restatement dates; the root act has
+        none). That is what keeps the pre-naming blank honest: the
+        original grant predates the naming scene, so it never grants
+        the restated term early. Grant events propagate freely past
+        that date (a re-grant revives the whole lineage); a
+        revocation event propagates only when the record it withdraws
+        — its single Transition predecessor, the edge ``revoke()``
+        itself wrote — belongs to the lineage. A revocation
+        withdrawing a fresh re-grant therefore stays on its own new
+        lineage and never touches the restated term.
+        """
+        own = self._events(holder, act)
+        # Holder-scoped record index: every statement record hanging
+        # off a grant or revocation atom, with its act, plus the
+        # reverse Restates index.
+        record_act: Dict[AtomId, AtomId] = {}
+        restates_to: Dict[AtomId, List[AtomId]] = {}
+        for name in ("ConsentGranted", "ConsentRevoked"):
+            for atom_id in self._assertions(name, holder):
+                atom_act = self.api.get(atom_id).args[1]
+                for record in self.records_of(atom_id):
+                    record_act[record] = atom_act
+                    target = self._one_hanger(record, "Restates")
+                    if target is not None:
+                        restates_to.setdefault(target, []).append(record)
+        # Seeds: the queried act's own event records plus every
+        # record hanging directly off its atoms.
+        seeds = {record for _key, record, _kind, _r, _h in own}
+        for name in ("ConsentGranted", "ConsentRevoked"):
+            for atom_id in self._assertions(name, holder):
+                if self.api.get(atom_id).args[1] == act:
+                    seeds.update(self.records_of(atom_id))
+        # Transitive Restates closure, both directions.
+        component = set()
+        stack = list(seeds)
+        while stack:
+            record = stack.pop()
+            if record in component:
+                continue
+            component.add(record)
+            target = self._one_hanger(record, "Restates")
+            if target is not None and target not in component:
+                stack.append(target)
+            for forward in restates_to.get(record, ()):
+                if forward not in component:
+                    stack.append(forward)
+        # Joining date per act: the earliest stated_on among its
+        # restatement records in the component. The root act has none.
+        join_key: Dict[AtomId, Tuple[int, int]] = {}
+        for record in component:
+            if self._one_hanger(record, "Restates") is None:
+                continue
+            record_act_of = record_act.get(record)
+            if record_act_of is None:
+                continue
+            stated_on = self.hangers_of(record)["stated_on"]
+            if stated_on is None:
+                continue
+            key = wxdy_key(stated_on)
+            if record_act_of not in join_key \
+                    or key < join_key[record_act_of]:
+                join_key[record_act_of] = key
+        lineage_acts = {
+            record_act[record] for record in component
+            if record in record_act
+        }
+        merged = list(own)
+        seen = {record for _key, record, _kind, _r, _h in own}
+        for other in lineage_acts:
+            if other == act:
+                continue
+            link_key = max(
+                join_key.get(other, (0, 0)),
+                join_key.get(act, (0, 0)),
+            )
+            for key, record, kind, _rec, hangers in self._events(
+                holder, other
+            ):
+                if record in seen:
+                    continue
+                if record_act.get(record) != other:
+                    continue  # direct events only; blanket stays local
+                if act in hangers["excludes"]:
+                    continue
+                if key < link_key:
+                    continue
+                if kind == "revocation":
+                    predecessors = {
+                        self.api.transition_args(t)[0]
+                        for t in self.api.in_transitions(record)
+                    }
+                    if not predecessors & component:
+                        continue
+                merged.append((key, record, kind, record, hangers))
+                seen.add(record)
+        merged.sort(key=lambda event: (event[0], event[1]))
+        return merged
+
     def consent_state(
         self, holder: AtomId, act: AtomId, as_of: str
     ) -> str:
@@ -883,6 +1001,12 @@ class ConsentPredicates:
           window has closed.
         - ``"none"`` — nothing stands either way: an honest blank,
           which must never be read as an implied yes.
+
+        The timeline read here is lineage-aware: revoking any name
+        in a restatement lineage revokes all names in that lineage
+        (see ``_lineage_events``), while revoking a label that later
+        heads a new lineage — a fresh re-grant of the old name after
+        the rename — leaves the old lineage untouched.
         """
         self._check_atom(holder, "holder")
         self._check_act(act)
@@ -895,7 +1019,9 @@ class ConsentPredicates:
         )
 
         governing: Optional[Tuple[str, Dict[str, object]]] = None
-        for key, _rid, kind, _record, hangers in self._events(holder, act):
+        for key, _rid, kind, _record, hangers in self._lineage_events(
+            holder, act
+        ):
             if key > at_key:
                 break
             governing = (kind, hangers)
