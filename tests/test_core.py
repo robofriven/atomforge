@@ -774,6 +774,51 @@ class CoreTests(unittest.TestCase):
             with self.assertRaises(GraphInvariantError):
                 AtomSpaceAPI.load(path)
 
+    def test_persistence_tolerates_stale_arity_only_for_deleted_atoms(self):
+        # Schema evolution vs tombstones: a predicate's declaration
+        # may gain arity after applications were written and
+        # deleted (ternary Gives tombstones binary frames under an
+        # arity-3 declaration). The deleted application must still
+        # load — it is history. A live application under the
+        # evolved declaration must still fail.
+        api = AtomSpaceAPI.create()
+        left = create_test_node(api, "left")
+        right = create_test_node(api, "right")
+        definition = api.predicate("Gives", arity=2)
+        application = api.create_predicate(definition, left, right)
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory) / "base.json"
+            api.save(base)
+            original = json.loads(base.read_text(encoding="utf-8"))
+
+            stale = json.loads(json.dumps(original))
+            stored = next(
+                atom for atom in stale["atoms"] if atom["id"] == definition)
+            stored["arity"] = 3
+            stored["roles"] = ["giver", "recipient", "payload"]
+            path = Path(directory) / "stale-live.json"
+            path.write_text(json.dumps(stale), encoding="utf-8")
+            with self.assertRaises(MalformedPersistenceError):
+                AtomSpaceAPI.load(path)
+
+            tombstoned = json.loads(json.dumps(stale))
+            assertion_id = tombstoned["next_id"]
+            tombstoned["next_id"] += 1
+            tombstoned["atoms"].append({
+                "args": [application],
+                "created_at_utc": "2026-01-01T00:00:00Z",
+                "id": assertion_id,
+                "label": None,
+                "predicate": api.delete_predicate,
+                "type": "Predicate",
+            })
+            tombstoned["confidence"][str(assertion_id)] = 1.0
+            path = Path(directory) / "stale-deleted.json"
+            path.write_text(json.dumps(tombstoned), encoding="utf-8")
+            loaded = AtomSpaceAPI.load(path)
+            self.assertIsNone(loaded.get(application))
+            self.assertTrue(loaded.get_raw(application).deleted)
+
     def test_persistence_rejects_live_relationship_at_deleted_atom(self):
         api = AtomSpaceAPI.create()
         target, other = create_test_node(api, "target"), create_test_node(api, "other")

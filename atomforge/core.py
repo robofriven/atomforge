@@ -305,7 +305,7 @@ class AtomSpace:
 
     def _validate_predicate_application(
         self, predicate_id: AtomId, args: Tuple[AtomId, ...],
-        *, allow_deleted: bool = False,
+        *, allow_deleted: bool = False, check_arity: bool = True,
     ) -> PredicateAtom:
         predicate = self._atoms.get(predicate_id) if allow_deleted else self.get(predicate_id)
         if not isinstance(predicate, PredicateAtom):
@@ -319,7 +319,8 @@ class AtomSpace:
                 raise error(
                     "Current assertions cannot be relationship arguments"
                 )
-        predicate.check_arity(len(args))
+        if check_arity:
+            predicate.check_arity(len(args))
         for validator in self._validators:
             validator(self, predicate, args)
         if predicate.anti_reflexive and len(set(args)) != len(args):
@@ -1057,8 +1058,16 @@ class AtomSpace:
                     f"Node {atom.id} uses deleted KindAtom {atom.kind}"
                 )
             if isinstance(atom, Predicate):
+                # Tombstones are history written under older schema:
+                # arity is a live-schema property, so a deleted
+                # application must load even when its predicate's
+                # declaration has since evolved (the ternary Gives
+                # migration tombstones binary frames under an
+                # arity-3 declaration). Live applications are still
+                # arity-checked strictly.
                 self._validate_predicate_application(
-                    atom.predicate, atom.args, allow_deleted=True
+                    atom.predicate, atom.args, allow_deleted=True,
+                    check_arity=not self._is_deleted(atom.id),
                 )
             if isinstance(atom, Transition):
                 if len(atom.args) != 2:

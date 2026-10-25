@@ -19,15 +19,16 @@ rest of the world — objects, and (for ``Gives``) another agent.
   instruments played for pleasure, the claw machine.  The line
   against ``Use`` is purpose, not mechanics: the same machine is
   ``Play`` when the point is the playing.
-- ``Gives(giver, recipient)`` — the directed frame between two
-  agents, and the module's centerpiece.  A giving is not complete
-  without *what* was given, so every ``Gives`` application carries
-  exactly one **payload**: a ``Payload`` ligature from the
-  application atom to an Act term (Robert gives Elena a massage —
-  the act hangs off the frame) or to an Object (Robert gives Elena
-  the ring).  The frame is the principle; the payload is the
-  hanger.  A ``Gives`` write with no payload is refused before
-  anything is written — there is no bare ``relate`` path for
+- ``Gives(giver, recipient, payload)`` — the directed frame
+  between two agents, and the module's centerpiece.  A giving is
+  not complete without *what* was given, so the payload is the
+  third argument: an Act term (Robert gives Elena a massage) or
+  an Object (Robert gives Elena the ring).  The frame is the
+  principle — the recipient stays in the atom, not hung off it —
+  and arity is what carries the payload: ``Gives`` is ternary,
+  because a giving has three roles and binary-only forced the
+  payload into a ligature hanger, where two payloads on one pair
+  corrupted one frame.  There is no bare ``relate`` path for
   ``Gives``, only :meth:`ActionVerbs.give` — and giving to oneself
   is refused outright.  For an object payload,
   :meth:`ActionVerbs.custody_receipt` chains the custody change as
@@ -64,7 +65,7 @@ from __future__ import annotations
 from typing import Dict, List, Optional
 from weakref import WeakKeyDictionary
 
-from ...atoms import AtomId, Ligature, Node, Predicate
+from ...atoms import AtomId, Node, Predicate
 from ...facade import AtomSpaceAPI
 from ...infrastructure import InvalidAtomOperationError, UnknownAtomError
 from ...rules.generic import RuleSet
@@ -73,15 +74,15 @@ from ..possession import install as install_possession
 from ..relational import install as install_relational
 
 
+# name -> (arity, roles). Arity is per-predicate and declared:
+# binary-only is retired — Gives is ternary because a giving has
+# three roles (giver, recipient, payload).
 _ACTION_SPECS = {
-    "Use": ("agent", "object"),
-    "Wears": ("agent", "object"),
-    "Play": ("agent", "object"),
-    "Gives": ("giver", "recipient"),
+    "Use": (2, ("agent", "object")),
+    "Wears": (2, ("agent", "object")),
+    "Play": (2, ("agent", "object")),
+    "Gives": (3, ("giver", "recipient", "payload")),
 }
-
-#: The ligature name carrying a Gives application's payload.
-PAYLOAD_LIGATURE = "Payload"
 
 _INSTALLATIONS: "WeakKeyDictionary[AtomSpaceAPI, ActionVerbs]" = (
     WeakKeyDictionary()
@@ -99,8 +100,8 @@ class ActionVerbs:
         self.relational = install_relational(api)
         self.object_kind = api.kind("Object")
         self.predicates: Dict[str, AtomId] = {}
-        for name, roles in _ACTION_SPECS.items():
-            predicate = api.predicate(name, arity=2, roles=roles)
+        for name, (arity, roles) in _ACTION_SPECS.items():
+            predicate = api.predicate(name, arity=arity, roles=roles)
             self.predicates[name] = predicate
             setattr(self, name, predicate)
         self._names = {predicate: name for name, predicate in self.predicates.items()}
@@ -206,7 +207,7 @@ class ActionVerbs:
         sake — a game, an instrument, the claw machine."""
         return self._simple(self.Play, agent, obj, **kwargs)
 
-    # -- Gives: the directed frame ----------------------------------------------
+    # -- Gives: the directed frame, ternary -------------------------------
 
     def give(
         self,
@@ -217,16 +218,18 @@ class ActionVerbs:
         label: Optional[str] = None,
         confidence: float = 1.0,
     ) -> AtomId:
-        """Assert ``Gives(giver, recipient)`` with its payload.
+        """Assert ``Gives(giver, recipient, payload)``.
 
-        ``payload`` is required and singular: an Act term node (the
-        act given — a massage, a rimjob) or an Object node (the thing
-        given — the ring).  It rides on the application atom as a
-        ``Payload`` ligature.  Self-giving is refused, as is any
-        payload that is not a Node (a category or an assertion is
-        not something that can be given), and any Node that is
-        neither an Act term nor an Object — a person is not a
-        payload.
+        ``payload`` is required: an Act term node (the act given —
+        a massage, a rimjob) or an Object node (the thing given —
+        the ring).  It is the third argument, not a hanger:
+        Core dedups on (predicate, args), so distinct payloads on
+        one pair separate naturally and same-payload repeats still
+        unify into one atom with grounding occurrences.  Self-giving
+        is refused, as is any payload that is not a Node (a category
+        or an assertion is not something that can be given), and any
+        Node that is neither an Act term nor an Object — a person is
+        not a payload.
         """
         if giver == recipient:
             raise TypeError("Gives cannot relate an agent to itself")
@@ -243,39 +246,21 @@ class ActionVerbs:
                 "Gives payload must be an Act term or an Object node; "
                 "mint objects with object_node()"
             )
-        application = self.rules.create_predicate(
-            self.Gives, giver, recipient,
+        return self.rules.create_predicate(
+            self.Gives, giver, recipient, payload,
             label=label, confidence=confidence,
         )
-        self.api.create_ligature(PAYLOAD_LIGATURE, application, payload)
-        return application
 
     def _gives_application(self, atom_id: AtomId, role: str) -> Predicate:
         self._check_atom(atom_id, role)
         atom = self.api.get(atom_id)
         if not isinstance(atom, Predicate) or atom.predicate != self.Gives:
             raise TypeError(f"actions {role} is not a Gives application")
-        return atom
-
-    def payload_of(self, give_atom: AtomId) -> AtomId:
-        """Return the one payload hanging off a ``Gives``
-        application.  Anything but exactly one is a broken write and
-        fails loud."""
-        self._gives_application(give_atom, "give_atom")
-        found: List[AtomId] = []
-        for ligature_id in self.api.in_ligatures(give_atom):
-            ligature = self.api.get(ligature_id)
-            if isinstance(ligature, Ligature) \
-                    and ligature.name == PAYLOAD_LIGATURE \
-                    and len(ligature.args) == 2 \
-                    and ligature.args[0] == give_atom:
-                found.append(ligature.args[1])
-        if len(found) != 1:
-            raise InvalidAtomOperationError(
-                f"Gives application {give_atom!r} carries "
-                f"{len(found)} payloads; exactly one is required"
+        if len(atom.args) != 3:
+            raise TypeError(
+                f"actions {role} is not a ternary Gives application"
             )
-        return found[0]
+        return atom
 
     def custody_receipt(self, give_atom: AtomId) -> AtomId:
         """Chain an object payload's custody change as a Transition
@@ -283,7 +268,7 @@ class ActionVerbs:
         atom over the payload.  Returns the Transition atom.  An act
         payload has no custody to receipt and is refused."""
         application = self._gives_application(give_atom, "give_atom")
-        payload = self.payload_of(give_atom)
+        payload = application.args[2]
         if self.acts.is_act(payload):
             raise TypeError(
                 "an act payload has no custody; custody receipts are "
@@ -310,13 +295,13 @@ class ActionVerbs:
         confidence: float = 1.0,
     ) -> AtomId:
         """Assert one action verb.  ``Gives`` is refused here: it
-        requires a payload and exists only through :meth:`give`."""
+        is ternary and exists only through :meth:`give`."""
         name = self._names.get(predicate)
         if name is None:
             raise TypeError("predicate is not part of the actions vocabulary")
         if name == "Gives":
             raise TypeError(
-                "Gives requires a payload; assert it with give()"
+                "Gives is ternary; assert it with give()"
             )
         return self._simple(
             predicate, left, right, label=label, confidence=confidence
@@ -328,6 +313,14 @@ class ActionVerbs:
     def has(self, predicate: AtomId, left: AtomId, right: AtomId) -> bool:
         if predicate not in self._names:
             raise TypeError("predicate is not part of the actions vocabulary")
+        if self._names[predicate] == "Gives":
+            # A two-argument check cannot express a ternary giving;
+            # a silent False would lie. Check the ternary application
+            # directly (givings_from / givings_to plus args).
+            raise TypeError(
+                "Gives is ternary; assert it with give() and inspect "
+                "givings_from / givings_to"
+            )
         return self.rules.has_predicate(predicate, left, right)
 
     has_predicate = has
@@ -365,6 +358,6 @@ install_action_verbs = install
 Actions = ActionVerbs
 
 __all__ = [
-    "ActionVerbs", "Actions", "PAYLOAD_LIGATURE", "install",
+    "ActionVerbs", "Actions", "install",
     "install_action_verbs",
 ]

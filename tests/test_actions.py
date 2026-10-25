@@ -83,9 +83,13 @@ class GivesTests(unittest.TestCase):
     def test_give_object_payload(self):
         application = self.actions.give(
             self.robert, self.elena, self.ring)
-        self.assertTrue(self.actions.has(
-            self.actions.Gives, self.robert, self.elena))
-        self.assertEqual(self.actions.payload_of(application), self.ring)
+        # Ternary shape: the payload is arg3, not a hanger — and no
+        # ligature is minted for it.
+        self.assertEqual(self.api.get(application).args,
+                         (self.robert, self.elena, self.ring))
+        self.assertTrue(self.api.has_predicate(
+            self.actions.Gives, self.robert, self.elena, self.ring))
+        self.assertEqual(self.api.in_ligatures(application), set())
         self.assertEqual(
             self.actions.givings_from(self.robert), [application])
         self.assertEqual(
@@ -94,8 +98,32 @@ class GivesTests(unittest.TestCase):
     def test_give_act_payload(self):
         application = self.actions.give(
             self.robert, self.elena, self.massage)
+        self.assertEqual(self.api.get(application).args,
+                         (self.robert, self.elena, self.massage))
+
+    def test_distinct_payloads_on_one_pair_separate(self):
+        # The E1 defect, fixed by arity: two payloads between the
+        # same pair are two atoms, not one corrupted frame.
+        ring_giving = self.actions.give(
+            self.robert, self.elena, self.ring)
+        massage_giving = self.actions.give(
+            self.robert, self.elena, self.massage)
+        self.assertNotEqual(ring_giving, massage_giving)
+        self.assertEqual(self.api.get(ring_giving).args,
+                         (self.robert, self.elena, self.ring))
+        self.assertEqual(self.api.get(massage_giving).args,
+                         (self.robert, self.elena, self.massage))
+
+    def test_same_payload_repeat_unifies(self):
+        # Dedup stays universal: a same-payload repeat is the same
+        # atom (frames survive; occurrences live in groundings).
+        first = self.actions.give(
+            self.robert, self.elena, self.ring)
+        second = self.actions.give(
+            self.robert, self.elena, self.ring)
+        self.assertEqual(first, second)
         self.assertEqual(
-            self.actions.payload_of(application), self.massage)
+            self.actions.givings_from(self.robert), [first])
 
     def test_give_requires_payload(self):
         # There is no payload-free path: relate() refuses Gives.
@@ -126,10 +154,19 @@ class GivesTests(unittest.TestCase):
         with self.assertRaises(UnknownAtomError):
             self.actions.give(self.robert, self.elena, 999999)
 
-    def test_payload_of_rejects_non_gives(self):
-        use_atom = self.actions.use(self.robert, self.ring)
+    def test_binary_paths_refuse_ternary_gives(self):
+        # Neither binary relate() nor binary has() can express a
+        # ternary giving; both refuse rather than lie.
         with self.assertRaises(TypeError):
-            self.actions.payload_of(use_atom)
+            self.actions.relate(
+                self.actions.Gives, self.robert, self.elena)
+        with self.assertRaises(TypeError):
+            self.actions.has(
+                self.actions.Gives, self.robert, self.elena)
+        self.actions.give(self.robert, self.elena, self.ring)
+        with self.assertRaises(TypeError):
+            self.actions.has(
+                self.actions.Gives, self.robert, self.elena)
 
     def test_custody_receipt_chains_transition_to_holds(self):
         application = self.actions.give(
@@ -272,7 +309,7 @@ class ObjectKindGateTests(unittest.TestCase):
         # ... including as a Gives payload with a custody receipt.
         application = self.actions.give(self.robert, self.elena, vibe)
         self.assertEqual(
-            self.actions.payload_of(application), vibe)
+            self.api.get(application).args[2], vibe)
         transition = self.actions.custody_receipt(application)
         _before, after = self.api.transition_args(transition)
         possession = install_possession(self.api)

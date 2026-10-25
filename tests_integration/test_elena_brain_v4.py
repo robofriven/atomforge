@@ -1,12 +1,13 @@
-"""Integration tests for Elena Brain v3 — the grammar migration.
+"""Integration tests for Elena Brain v4 — ternary Gives.
 
-These load the migrated artifact (elena-brain-v3.json, produced by
-the goal workspace's build3/migrate.py from elena-brain-v2.json) and
-check both that everything v2 guaranteed still holds (scenes, verses,
+These load the migrated artifact (elena-brain-v4.json, produced by
+the goal workspace's build4/migrate4.py from elena-brain-v3.json) and
+check both that everything v3 guaranteed still holds (scenes, verses,
 consent, convictions, clock integrity, plan state) and that the new
 grammar is what the graph now speaks: vocabulary-term Does targets,
-Gives frames with payloads, Object-kind nodes, the body-object state
-predicates, response atoms, and the W1D2 retcon scenes.
+ternary Gives(giver, recipient, payload) atoms with no Payload
+ligatures, Object-kind nodes, the body-object state predicates,
+response atoms, and the W1D2 retcon scenes.
 
 Run from the repo root:
     python3 -m unittest discover -s tests_integration
@@ -30,7 +31,7 @@ from atomforge.domain.consent import install as install_consent
 BRAIN_PATH = (
     Path.home() / "workspace" / "goals"
     / "sillytavern-rp-memory-graph" / "hidden_files"
-    / "elena-brain" / "elena-brain-v3.json"
+    / "elena-brain" / "elena-brain-v4.json"
 )
 
 # The two Does targets the migration was forbidden to touch: both are
@@ -46,7 +47,7 @@ FEELING_TERMS = {
 }
 
 
-class ElenaBrainV3Tests(unittest.TestCase):
+class ElenaBrainV4Tests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.api = AtomSpaceAPI.load(BRAIN_PATH)
@@ -217,23 +218,32 @@ class ElenaBrainV3Tests(unittest.TestCase):
 
     # -- Gives frames, objects, states, responses --------------------------
 
-    def test_every_gives_frame_carries_one_payload(self):
-        # Frames dedup per (giver, recipient, payload) by design —
-        # 19 distinct frames carry the 40+ directed occurrences,
-        # which enumerate through the frames' groundings.
-        frames = (self.actions.givings_from(self.elena)
-                  + self.actions.givings_from(self.robert))
-        self.assertGreaterEqual(len(frames), 19)
+    def test_every_gives_atom_is_ternary(self):
+        # Ternary Gives (Robert, 2026-10-25): atoms dedup per
+        # (giver, recipient, payload) by universal Core dedup —
+        # 19 distinct atoms carry the 40+ directed occurrences,
+        # which enumerate through the atoms' groundings. No Payload
+        # ligature survives anywhere in the live graph.
+        from atomforge.atoms import Ligature
+        atoms = (self.actions.givings_from(self.elena)
+                 + self.actions.givings_from(self.robert))
+        self.assertGreaterEqual(len(atoms), 19)
         groundings = 0
-        for frame in frames:
-            payload = self.actions.payload_of(frame)  # raises unless 1
+        for atom_id in atoms:
+            atom = self.api.get(atom_id)
+            self.assertEqual(len(atom.args), 3, atom_id)
+            payload = atom.args[2]
             self.assertTrue(
                 self.acts.is_act(payload)
                 or self.actions.is_object(payload),
                 self.label_of(payload))
             groundings += len(self.predicates_with(
-                self.ep.EvidenceFor, frame))
+                self.ep.EvidenceFor, atom_id))
         self.assertGreaterEqual(groundings, 40)
+        self.assertEqual(
+            [r.atom for r in self.api.search()
+             if isinstance(r.atom, Ligature)
+             and r.atom.name == "Payload"], [])
 
     def test_ring_transfer_frames_with_custody(self):
         from atomforge.atoms import Transition
@@ -243,7 +253,7 @@ class ElenaBrainV3Tests(unittest.TestCase):
             ring = self.one(ring_label)
             frames = [f for f in self.actions.givings_from(giver)
                       if self.api.get(f).args[1] == recipient
-                      and self.actions.payload_of(f) == ring]
+                      and self.api.get(f).args[2] == ring]
             self.assertEqual(len(frames), 1, ring_label)
             self.assertTrue(self.api.has_predicate(
                 self.possession.Holds, recipient, ring))
