@@ -1,13 +1,14 @@
-"""Integration tests for Elena Brain v4 — ternary Gives.
+"""Integration tests for Elena Brain v5 — secret-play seed restatement (YANK shape).
 
-These load the migrated artifact (elena-brain-v4.json, produced by
-the goal workspace's build4/migrate4.py from elena-brain-v3.json) and
-check both that everything v3 guaranteed still holds (scenes, verses,
-consent, convictions, clock integrity, plan state) and that the new
-grammar is what the graph now speaks: vocabulary-term Does targets,
-ternary Gives(giver, recipient, payload) atoms with no Payload
-ligatures, Object-kind nodes, the body-object state predicates,
-response atoms, and the W1D2 retcon scenes.
+These load the migrated artifact (elena-brain-v5.json, produced by
+the goal workspace's build5/migrate5.py from elena-brain-v5.json) and
+check both that everything v4 guaranteed still holds (scenes, verses,
+consent, convictions, clock integrity, plan state) and that the v5
+restructure is what the graph now speaks: the W1D1 record chain on
+"secret play" physically yanked (not tombstoned), grant atom 289 live
+with exactly one record — the W1D4 restatement record chained to the
+provisional-term P grant ("the public stuff", W1D1) — and the
+transition test (none before naming, granted from naming on).
 
 Run from the repo root:
     python3 -m unittest discover -s tests_integration
@@ -32,7 +33,7 @@ from atomforge.domain.sex import install as install_sex
 BRAIN_PATH = (
     Path.home() / "workspace" / "goals"
     / "sillytavern-rp-memory-graph" / "hidden_files"
-    / "elena-brain" / "elena-brain-v4.json"
+    / "elena-brain" / "elena-brain-v5.json"
 )
 
 # The two Does targets the migration was forbidden to touch: both are
@@ -48,7 +49,7 @@ FEELING_TERMS = {
 }
 
 
-class ElenaBrainV4Tests(unittest.TestCase):
+class ElenaBrainV5Tests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.api = AtomSpaceAPI.load(BRAIN_PATH)
@@ -294,6 +295,124 @@ class ElenaBrainV4Tests(unittest.TestCase):
         orr = self.predicates_with(self.sex.Orgasms, self.robert)[0]
         self.assertTrue(self.rel.has(self.rel.Simultaneous, oe.id, orr.id))
 
+    # -- secret-play restatement (v5) ------------------------------------
+
+    def test_yanked_atoms_physically_absent(self):
+        # YANK shape (Robert, 2026-10-25): atoms 290-299 leave the
+        # file entirely — no atom, no confidence entry, and no Delete
+        # assertion naming them. Pre-existing v4 tombstones (755)
+        # carry over unchanged.
+        import json
+        data = json.loads(BRAIN_PATH.read_text())
+        ids = {a["id"] for a in data["atoms"]}
+        self.assertFalse(ids & set(range(290, 300)))
+        self.assertFalse(set(range(290, 300)) & {
+            int(k) for k in data["confidence"]})
+        delete_pred = data["delete_predicate"]
+        targets = {a["args"][0] for a in data["atoms"]
+                   if a["type"] == "Predicate"
+                   and a.get("predicate") == delete_pred}
+        self.assertFalse(targets & set(range(290, 300)))
+        deleted = sum(1 for r in self.api.search_raw() if r.deleted)
+        self.assertEqual(deleted, 755)
+
+    def test_secret_play_transition(self):
+        # The transition test for final incremental ingesting: the
+        # name did not exist before the naming scene, so the state
+        # is an honest blank there and granted from naming on.
+        secret = self.acts.act_node("secret play")
+        self.assertEqual(
+            self.co.consent_state(self.elena, secret, "W1D3"), "none")
+        self.assertEqual(
+            self.co.consent_state(self.elena, secret, "W1D4"), "granted")
+        self.assertEqual(
+            self.co.consent_state(self.elena, secret, "W2D1"), "granted")
+
+    def test_grant_289_has_exactly_the_restatement_record(self):
+        from atomforge.atoms import Ligature, Transition
+        secret = self.acts.act_node("secret play")
+        grants = [g for g in self.co.grants_of(self.elena)
+                  if self.api.get(g).args[1] == secret]
+        self.assertEqual(len(grants), 1)
+        self.assertEqual(self.api.get(grants[0]).args[0], self.elena)
+        records = self.co.records_of(grants[0])
+        self.assertEqual(len(records), 1)
+        hangers = self.co.hangers_of(records[0])
+        self.assertEqual(hangers["to"], self.robert)
+        self.assertEqual(hangers["stated_on"], "W1D4")
+        self.assertEqual(hangers["active_from"], "W1D1")
+        self.assertEqual(hangers["expires"], "W999D999")
+        self.assertEqual(hangers["mode"], "restated")
+        self.assertEqual(hangers["excludes"], [])
+        # Restates ligature + Transition chain to the P record.
+        restates = [r.atom for r in self.api.search()
+                    if isinstance(r.atom, Ligature)
+                    and r.atom.name == "Restates"
+                    and r.atom.args[0] == records[0]]
+        self.assertEqual(len(restates), 1)
+        p_record = restates[0].args[1]
+        chain = [r.atom for r in self.api.search()
+                 if isinstance(r.atom, Transition)
+                 and r.atom.args == (p_record, records[0])]
+        self.assertEqual(len(chain), 1)
+        # The naming Says is Elena's own confession sentence.
+        naming = self.api.get(hangers["statement"])
+        self.assertEqual(naming.args[0], self.elena)
+        self.assertEqual(
+            self.label_of(naming.args[1]),
+            "that was secret play, a category we hadn't named yet")
+
+    def test_provisional_term_p(self):
+        # P ("the public stuff", treaty language) is a live Act node
+        # granted W1D1 — and NOTHING links it to "public play", whose
+        # hard limit must keep standing on its own.
+        p = self.one("the public stuff")
+        self.assertTrue(self.acts.is_act(p))
+        pubplay = self.acts.act_node("public play")
+        self.assertFalse(self.rel.has(self.rel.IsA, p, pubplay))
+        self.assertFalse(self.rel.has(self.rel.IsA, pubplay, p))
+        self.assertEqual(
+            self.co.consent_state(self.elena, p, "W1D1"), "granted")
+        self.assertEqual(
+            self.co.consent_state(self.elena, p, "W2D1"), "granted")
+        self.assertEqual(
+            self.co.consent_state(self.elena, pubplay, "W2D1"),
+            "hard_limit")
+        grants = [g for g in self.co.grants_of(self.elena)
+                  if self.api.get(g).args[1] == p]
+        self.assertEqual(len(grants), 1)
+        hangers = self.co.hangers_of(self.co.records_of(grants[0])[0])
+        self.assertEqual(hangers["to"], self.robert)
+        self.assertEqual(hangers["stated_on"], "W1D1")
+        self.assertEqual(hangers["mode"], "declared")
+
+    def test_consent_census_v5_baseline(self):
+        # Live census, counted the same way the migration counts it:
+        # applications, Statement-pointed records, ligatures hanging
+        # on either. v4 was 27/7/70; v5 is 28/8/78 (289 stays, P added;
+        # 290 gone, P record + restatement record added).
+        from atomforge.atoms import Ligature, Predicate
+        preds = {self.co.predicates[name]
+                 for name in ("ConsentGranted", "HardLimit",
+                              "ConsentRevoked")}
+        apps = [r.atom for r in self.api.search()
+                if isinstance(r.atom, Predicate)
+                and r.atom.predicate in preds]
+        app_ids = {a.id for a in apps}
+        records = set()
+        for r in self.api.search():
+            a = r.atom
+            if isinstance(a, Ligature) and a.name == "Statement" \
+                    and a.args and a.args[0] in app_ids:
+                records.add(a.args[1])
+        hangers = [r.atom for r in self.api.search()
+                   if isinstance(r.atom, Ligature) and r.atom.args
+                   and (r.atom.args[0] in app_ids
+                        or r.atom.args[0] in records)]
+        self.assertEqual(len(apps), 28)
+        self.assertEqual(len(records), 8)
+        self.assertEqual(len(hangers), 78)
+
     # -- consent (untouched layer) -----------------------------------------
 
     def test_sleep_permission_with_anal_excluded(self):
@@ -325,7 +444,7 @@ class ElenaBrainV4Tests(unittest.TestCase):
 
     def test_consent_layer_only_sees_consent_atoms(self):
         # Consent state is explicit only (Robert, 2026-10-22): an act
-        # never granted in the consent layer reports "none". In v3
+        # never granted in the consent layer reports "none". In v5
         # the probe act is the sixty-nine TERM (its v2 phrase label
         # was re-termed away).
         act = self.acts.act_node("sixty-nine")
